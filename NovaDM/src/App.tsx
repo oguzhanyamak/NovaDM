@@ -1,4 +1,4 @@
-import { Sidebar } from "./components/Sidebar";
+import { MainLayout } from "./layouts/MainLayout";
 import { Downloads } from "./pages/Downloads";
 import { History } from "./pages/History";
 import { Settings } from "./pages/Settings";
@@ -21,10 +21,9 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar />
+    <MainLayout>
       {renderView()}
-    </div>
+    </MainLayout>
   );
 }
 

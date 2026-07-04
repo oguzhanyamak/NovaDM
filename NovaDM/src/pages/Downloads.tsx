@@ -5,7 +5,7 @@ export function Downloads() {
   const downloads = useDownloadsStore((state) => state.downloads);
 
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full">
       <header className="border-b border-border bg-card">
         <div className="flex items-center justify-between px-8 py-4">
           <div>

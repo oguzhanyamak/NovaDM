@@ -2,7 +2,7 @@ import { History as HistoryIcon } from 'lucide-react';
 
 export function History() {
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full">
       <header className="border-b border-border bg-card">
         <div className="px-8 py-4">
           <h2 className="text-2xl font-bold text-foreground">History</h2>
