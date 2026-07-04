@@ -25,6 +25,16 @@ export const downloadService = {
     await invoke('cancel_download', { id });
   },
 
+  async openFile(path: string): Promise<void> {
+    // Only this service calls Tauri commands
+    await invoke('open_file', { path });
+  },
+
+  async showInFolder(path: string): Promise<void> {
+    // Only this service calls Tauri commands
+    await invoke('show_in_folder', { path });
+  },
+
   async getDownloads(): Promise<Download[]> {
     // Placeholder - will call Tauri command
     return [];

@@ -14,7 +14,7 @@ pub enum DownloadError {
     #[error("HTTP error: {0}")]
     HttpError(u16),
 
-    /// File I/O error (permission denied, disk full, etc.)
+    /// File I/O error
     #[error("IO error: {0}")]
     IoError(String),
 
@@ -33,6 +33,22 @@ pub enum DownloadError {
     /// Download was cancelled by user
     #[error("Download cancelled")]
     Cancelled,
+
+    /// Permission denied
+    #[error("Permission denied")]
+    PermissionDenied,
+
+    /// Disk full
+    #[error("Disk full")]
+    DiskFull,
+
+    /// Network timeout
+    #[error("Network timeout")]
+    Timeout,
+
+    /// Network disconnected
+    #[error("Network disconnected")]
+    NetworkDisconnected,
 }
 
 /// Result type alias for download operations

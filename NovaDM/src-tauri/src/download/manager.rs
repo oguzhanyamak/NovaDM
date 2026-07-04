@@ -20,6 +20,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use crate::download::errors::{DownloadError, Result};
 use crate::download::models::DownloadTask;
+use crate::download::utils::resolve_filename_conflict;
 use crate::core::DownloadHandle;
 
 /// Download manager for handling HTTP downloads
@@ -233,14 +234,22 @@ impl DownloadManager {
     }
 
     /// Build the output file path and ensure directory exists
+    /// 
+    /// If the file already exists, automatically renames it:
+    /// - movie.mp4 → movie (1).mp4
+    /// - movie (1).mp4 → movie (2).mp4
     async fn build_output_path(task: &DownloadTask) -> Result<PathBuf> {
-        let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+        let initial_path = PathBuf::from(&task.save_location).join(&task.filename);
         
         // Ensure directory exists
-        if let Some(parent) = output_path.parent() {
+        if let Some(parent) = initial_path.parent() {
             tokio::fs::create_dir_all(parent).await
-                .map_err(|e| DownloadError::IoError(e.to_string()))?;
+                .map_err(|e| crate::download::utils::categorize_io_error(&e))?;
         }
+
+        // Resolve filename conflicts
+        let output_path = resolve_filename_conflict(&initial_path)
+            .map_err(|e| crate::download::utils::categorize_io_error(&e))?;
 
         Ok(output_path)
     }

@@ -10,98 +10,107 @@ A modern, feature-rich download manager built with Tauri v2, React, TypeScript, 
 - **State Management**: Zustand
 - **Icons**: Lucide React
 
+## Features (Alpha)
+
+- ✅ HTTP download with streaming (memory efficient)
+- ✅ Progress events with real-time updates
+- ✅ Download cancellation with CancellationToken
+- ✅ File conflict resolution (auto-rename)
+- ✅ Open file after completion
+- ✅ Show in folder
+- ✅ Structured error handling
+- ✅ UUID-based download IDs
+- ✅ Clean architecture
+- ✅ Unit tests
+
 ## Project Structure
 
 ```
 NovaDM/
 ├── src/                          # Frontend source code
 │   ├── components/               # Reusable UI components
-│   │   ├── Sidebar.tsx          # Navigation sidebar with app branding
-│   │   └── index.ts             # Barrel export for components
-│   │
+│   │   ├── download/             # Download-specific components
+│   │   │   ├── DownloadCard.tsx
+│   │   │   ├── DownloadProgress.tsx
+│   │   │   ├── DownloadSpeedLabel.tsx
+│   │   │   ├── DownloadStatusBadge.tsx
+│   │   │   └── DownloadFileIcon.tsx
+│   │   └── common/               # Shared components
+│   │       ├── EmptyState.tsx
+│   │       ├── SectionHeader.tsx
+│   │       └── ConfirmationDialog.tsx
 │   ├── pages/                    # Page components
-│   │   ├── Downloads.tsx        # Main downloads view with empty state
-│   │   ├── History.tsx          # Download history view
-│   │   ├── Settings.tsx         # Settings view (placeholder)
-│   │   └── index.ts             # Barrel export for pages
-│   │
+│   │   ├── Downloads.tsx
+│   │   ├── History.tsx
+│   │   ├── Settings.tsx
+│   │   └── index.ts
 │   ├── hooks/                    # Custom React hooks
-│   │   └── use-downloads.ts     # Download management hook
-│   │
 │   ├── services/                 # API service layer
-│   │   └── download.ts          # Download API service (placeholder)
-│   │
+│   │   ├── download.ts           # Download API service
+│   │   └── event.ts              # Event listener service
 │   ├── store/                    # State management
-│   │   └── downloads.ts         # Zustand store for downloads
-│   │
+│   │   └── downloads.ts          # Zustand store
 │   ├── types/                    # TypeScript type definitions
-│   │   └── index.ts             # Download, History, and View types
-│   │
+│   │   └── index.ts
 │   ├── lib/                      # Utility functions
-│   │   └── utils.ts             # cn() helper for class names
-│   │
-│   ├── App.tsx                   # Main app component with routing
-│   ├── App.css                   # Tailwind CSS imports and theme
-│   └── main.tsx                  # React entry point
+│   │   └── utils.ts
+│   ├── App.tsx
+│   ├── App.css
+│   └── main.tsx
 │
 ├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── main.rs              # Application entry point
-│   │   └── lib.rs               # Tauri command registration
-│   │
-│   ├── api/                      # Tauri API commands
-│   │   └── mod.rs               # Command handlers for downloads
-│   │
-│   ├── download/                 # Download management logic
-│   │   └── mod.rs               # DownloadManager and types
-│   │
-│   ├── storage/                  # Persistent storage
-│   │   └── mod.rs               # StorageManager and config
-│   │
-│   ├── utils/                    # Rust utility functions
-│   │   └── mod.rs               # Helper functions (formatting, IDs)
-│   │
-│   └── Cargo.toml               # Rust dependencies
+│   │   ├── api/                  # Tauri command handlers
+│   │   │   └── mod.rs
+│   │   ├── core/                 # App state and config
+│   │   │   ├── mod.rs
+│   │   │   ├── config.rs
+│   │   │   ├── constants.rs
+│   │   │   ├── errors.rs
+│   │   │   └── events.rs
+│   │   ├── download/             # Download management logic
+│   │   │   ├── mod.rs
+│   │   │   ├── manager.rs        # DownloadManager singleton
+│   │   │   ├── models.rs
+│   │   │   ├── errors.rs
+│   │   │   ├── utils.rs          # File conflict resolution
+│   │   │   ├── worker.rs
+│   │   │   ├── queue.rs
+│   │   │   └── chunk.rs
+│   │   ├── storage/              # Persistent storage
+│   │   │   └── settings.rs
+│   │   ├── utils/                # Rust utility functions
+│   │   │   └── formatting.rs
+│   │   └── lib.rs
+│   └── Cargo.toml
 │
-├── package.json                  # Node.js dependencies
-├── vite.config.ts                # Vite configuration
-├── tsconfig.json                 # TypeScript configuration
-└── index.html                    # HTML entry point
+├── docs/                         # Documentation
+│   ├── ARCHITECTURE.md
+│   └── ROADMAP.md
+│
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+└── index.html
 ```
 
 ## Architecture
 
-### Frontend Architecture
+### Backend
 
-The frontend follows a clean separation of concerns:
+The Rust backend uses a singleton pattern for the DownloadManager:
 
-- **components/**: Reusable UI components (Sidebar, etc.)
-- **pages/**: Route-level components (Downloads, History, Settings)
-- **hooks/**: Custom React hooks for business logic
-- **services/**: API communication layer with Tauri backend
-- **store/**: Zustand state management
-- **types/**: TypeScript interfaces and type definitions
-- **lib/**: Shared utility functions
+- **DownloadManager**: Single instance managed by Tauri, handles all downloads
+- **HashMap<String, DownloadHandle>**: O(1) lookup for active downloads
+- **CancellationToken**: Graceful cancellation without thread interruption
+- **Streaming**: Memory-efficient downloads with reqwest and BufWriter
 
-### Backend Architecture
+### Frontend
 
-The Rust backend is organized into focused modules:
-
-- **api/**: Tauri command handlers that expose functionality to frontend
-- **download/**: Core download management logic (placeholder for now)
-- **storage/**: Configuration and persistent data management
-- **utils/**: Shared utility functions (formatting, ID generation, etc.)
-
-## Features
-
-- ✅ Modern dark theme with purple accent colors
-- ✅ Clean, minimal UI with sidebar navigation
-- ✅ Empty state for downloads list
-- ✅ Zustand state management (empty store ready for implementation)
-- ✅ Type-safe with TypeScript
-- ✅ Responsive layout with Tailwind CSS
-- ✅ Lucide icons for consistent iconography
-- ✅ Placeholder backend structure ready for download logic
+- **EventService**: Centralized event listener (only this service talks to Tauri)
+- **DownloadService**: Tauri command wrapper (only this service invokes commands)
+- **Zustand Store**: Centralized state management
+- **Clean separation**: UI never directly calls Tauri
 
 ## Getting Started
 
@@ -126,22 +135,13 @@ npm run build
 
 ## Development
 
-The application is structured for clean architecture:
+```bash
+# Run Rust tests
+cd src-tauri && cargo test
 
-1. **Frontend and backend are completely separated**
-2. **Communication happens through Tauri commands** (defined in `src-tauri/api/`)
-3. **State management is centralized** in Zustand store
-4. **Types are shared** between frontend and backend concepts
-5. **No download logic implemented yet** - structure is ready for it
-
-## Next Steps
-
-- Implement download logic in `src-tauri/download/`
-- Add actual Tauri command implementations
-- Connect frontend services to backend API
-- Add download creation dialog
-- Implement progress tracking
-- Add settings persistence
+# Run frontend build
+npm run build
+```
 
 ## License
 
