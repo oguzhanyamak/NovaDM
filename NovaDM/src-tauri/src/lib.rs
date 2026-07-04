@@ -10,22 +10,25 @@ mod download;
 mod storage;
 mod utils;
 
-use api::{ping, get_app_state, start_download, start_fake_download};
+use api::{ping, get_app_state, start_download, cancel_download};
 use core::AppState;
+use download::manager::DownloadManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app_state = AppState::default();
+    let download_manager = DownloadManager::new();
     
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
+        .manage(download_manager)
         .invoke_handler(tauri::generate_handler![
             greet,
             ping,
             get_app_state,
             start_download,
-            start_fake_download
+            cancel_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

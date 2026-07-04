@@ -1,7 +1,7 @@
 import { cn } from '../../lib/utils';
 
 interface DownloadStatusBadgeProps {
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
   className?: string;
 }
 
@@ -27,6 +27,11 @@ export function DownloadStatusBadge({ status, className }: DownloadStatusBadgePr
         return {
           label: 'Error',
           className: 'bg-red-500/10 text-red-500 border-red-500/20'
+        };
+      case 'cancelled':
+        return {
+          label: 'Cancelled',
+          className: 'bg-gray-500/10 text-gray-500 border-gray-500/20'
         };
       case 'pending':
       default:

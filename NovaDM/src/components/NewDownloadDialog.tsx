@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { cn } from '../lib/utils';
-import { Download, FolderOpen } from 'lucide-react';
+import { Download as DownloadIcon, FolderOpen } from 'lucide-react';
 import { downloadService } from '../services/download';
+import { useDownloadsStore } from '../store/downloads';
+import type { Download } from '../types';
 
 interface NewDownloadDialogProps {
   open: boolean;
@@ -15,6 +17,7 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
   const [urlError, setUrlError] = useState('');
   const [urlTouched, setUrlTouched] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const addDownload = useDownloadsStore((state) => state.addDownload);
 
   // Set default save location to Downloads folder
   useEffect(() => {
@@ -103,6 +106,23 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
     }
 
     setIsSubmitting(true);
+    
+    // Create a download entry
+    const newDownload: Download = {
+      id: `download-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: filename,
+      url,
+      status: 'downloading',
+      progress: 0,
+      size: 0,
+      downloaded: 0,
+      speed: 0,
+      createdAt: new Date(),
+    };
+
+    // Add to store
+    addDownload(newDownload);
+    
     try {
       await downloadService.startDownload({
         url,
@@ -231,7 +251,7 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
               disabled={!isFormValid || isSubmitting}
               className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
-              <Download className="h-4 w-4" />
+              <DownloadIcon className="h-4 w-4" />
               {isSubmitting ? 'Starting...' : 'Download'}
             </button>
           </div>

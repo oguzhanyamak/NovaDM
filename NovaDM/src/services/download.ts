@@ -20,6 +20,11 @@ export const downloadService = {
     });
   },
 
+  async cancelDownload(id: string): Promise<void> {
+    // Only this service calls Tauri commands
+    await invoke('cancel_download', { id });
+  },
+
   async getDownloads(): Promise<Download[]> {
     // Placeholder - will call Tauri command
     return [];
@@ -40,8 +45,9 @@ export const downloadService = {
     await invoke('resume_download', { id });
   },
 
-  async cancelDownload(id: string): Promise<void> {
-    // Placeholder - will call Tauri command
-    await invoke('cancel_download', { id });
-  },
+  // Remove duplicate - real implementation above
+  // async cancelDownload(id: string): Promise<void> {
+  //   // Placeholder - will call Tauri command
+  //   await invoke('cancel_download', { id });
+  // },
 };

@@ -1,3 +1,5 @@
+import { X } from 'lucide-react';
+import { downloadService } from '../../services/download';
 import { DownloadFileIcon } from './DownloadFileIcon';
 import { DownloadStatusBadge } from './DownloadStatusBadge';
 import { DownloadProgress } from './DownloadProgress';
@@ -8,7 +10,7 @@ interface DownloadCardProps {
   id: string;
   name: string;
   url: string;
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
   progress: number;
   speed: number;
   className?: string;
@@ -23,6 +25,14 @@ export function DownloadCard({
   speed,
   className
 }: DownloadCardProps) {
+  const handleCancel = async () => {
+    try {
+      await downloadService.cancelDownload(id);
+    } catch (err) {
+      console.error('Failed to cancel download:', err);
+    }
+  };
+
   return (
     <div 
       data-testid={`download-card-${id}`}
@@ -53,6 +63,15 @@ export function DownloadCard({
             <DownloadSpeedLabel speed={speed} />
           )}
           <DownloadStatusBadge status={status} />
+          {status === 'downloading' && (
+            <button
+              onClick={handleCancel}
+              className="p-1 rounded hover:bg-accent hover:text-accent-foreground"
+              title="Cancel download"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>

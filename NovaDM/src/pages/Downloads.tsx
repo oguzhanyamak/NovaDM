@@ -6,16 +6,15 @@ import { DownloadCard } from '../components/download/DownloadCard';
 import { NewDownloadDialog } from '../components/NewDownloadDialog';
 import { useDownloadsStore } from '../store/downloads';
 import { eventService } from '../services/event';
-import { downloadService } from '../services/download';
-import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData } from '../services/event';
+import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData } from '../services/event';
 
 export function Downloads() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const downloads = useDownloadsStore((state) => state.downloads);
-  const addDownload = useDownloadsStore((state) => state.addDownload);
   const updateDownloadProgress = useDownloadsStore((state) => state.updateDownloadProgress);
   const completeDownload = useDownloadsStore((state) => state.completeDownload);
   const updateDownload = useDownloadsStore((state) => state.updateDownload);
+  const markAsCancelled = useDownloadsStore((state) => state.markAsCancelled);
 
   // Register event listeners
   useEffect(() => {
@@ -23,7 +22,7 @@ export function Downloads() {
       (data: DownloadProgressData) => {
         // Handle indeterminate progress (when content-length is unknown)
         const progress = data.progress ?? 0;
-        updateDownloadProgress(data.id, progress, data.speed);
+        updateDownloadProgress(data.id, progress, data.downloaded_bytes, data.total_bytes, data.speed);
       }
     );
 
@@ -43,40 +42,22 @@ export function Downloads() {
       }
     );
 
+    const unlistenCancelled = eventService.registerCancelledListener(
+      (data: DownloadCancelledData) => {
+        markAsCancelled(data.id);
+      }
+    );
+
     return () => {
       unlistenProgress();
       unlistenCompleted();
       unlistenError();
+      unlistenCancelled();
     };
-  }, [updateDownloadProgress, completeDownload, updateDownload]);
+  }, [updateDownloadProgress, completeDownload, updateDownload, markAsCancelled]);
 
-  const handleNewDownload = async () => {
-    // Create a demo download entry
-    const demoDownload = {
-      id: 'demo-download',
-      name: 'Demo File.zip',
-      url: 'https://example.com/demo.zip',
-      status: 'downloading' as const,
-      progress: 0,
-      size: 100000000, // 100 MB
-      downloaded: 0,
-      speed: 0,
-      createdAt: new Date(),
-    };
-
-    addDownload(demoDownload);
-    setIsDialogOpen(false);
-
-    // Start the real download
-    try {
-      await downloadService.startDownload({
-        url: demoDownload.url,
-        filename: demoDownload.name,
-        saveLocation: '~/Downloads/NovaDM',
-      });
-    } catch (err) {
-      console.error('Failed to start download:', err);
-    }
+  const handleOpenDialog = () => {
+    setIsDialogOpen(true);
   };
 
   return (
@@ -88,7 +69,7 @@ export function Downloads() {
             description="Manage your downloads"
             action={
               <button 
-                onClick={handleNewDownload}
+                onClick={handleOpenDialog}
                 className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
                 <Plus className="w-4 h-4" />

@@ -1,27 +1,39 @@
-// Download error types
-// Specialized error handling for download operations
+//! Download error types
+//! Specialized error handling for download operations
 
 use thiserror::Error;
 
+/// Errors that can occur during download operations
 #[derive(Error, Debug)]
 pub enum DownloadError {
+    /// Network-related error (connection, timeout, etc.)
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// HTTP error with status code
+    #[error("HTTP error: {0}")]
+    HttpError(u16),
+
+    /// File I/O error (permission denied, disk full, etc.)
+    #[error("IO error: {0}")]
+    IoError(String),
+
+    /// Invalid URL provided
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
+    /// Download not found
     #[error("Download not found: {0}")]
     NotFound(String),
 
+    /// Download already exists
     #[error("Download already exists: {0}")]
     AlreadyExists(String),
 
-    #[error("Download failed: {0}")]
-    Failed(String),
+    /// Download was cancelled by user
+    #[error("Download cancelled")]
+    Cancelled,
 }
 
+/// Result type alias for download operations
 pub type Result<T> = std::result::Result<T, DownloadError>;

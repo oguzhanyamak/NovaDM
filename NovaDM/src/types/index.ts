@@ -2,7 +2,7 @@ export interface Download {
   id: string;
   name: string;
   url: string;
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
   progress: number;
   size: number;
   downloaded: number;

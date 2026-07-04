@@ -9,11 +9,12 @@ interface DownloadsState {
   addDownload: (download: Download) => void;
   removeDownload: (id: string) => void;
   updateDownload: (id: string, updates: Partial<Download>) => void;
-  updateDownloadProgress: (id: string, progress: number, speed: number) => void;
+  updateDownloadProgress: (id: string, progress: number | null, downloadedBytes: number, totalBytes: number | null, speed: number) => void;
   completeDownload: (id: string) => void;
+  markAsCancelled: (id: string) => void;
 }
 
-export const useDownloadsStore = create<DownloadsState>((set) => ({
+export const useDownloadsStore = create<DownloadsState>((set) => ({ 
   downloads: [],
   history: [],
   currentView: 'downloads',
@@ -32,15 +33,16 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
         d.id === id ? { ...d, ...updates } : d
       ),
     })),
-  updateDownloadProgress: (id, progress, speed) =>
+  updateDownloadProgress: (id, progress, downloadedBytes, totalBytes, speed) =>
     set((state) => ({
       downloads: state.downloads.map((d) =>
         d.id === id
           ? {
               ...d,
-              progress,
+              progress: progress ?? d.progress,
+              downloaded: downloadedBytes,
+              size: totalBytes ?? d.size,
               speed,
-              downloaded: Math.floor((progress / 100) * d.size),
             }
           : d
       ),
@@ -55,6 +57,19 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
               progress: 100,
               speed: 0,
               completedAt: new Date(),
+            }
+          : d
+      ),
+    })),
+
+  markAsCancelled: (id) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'cancelled' as const,
+              speed: 0,
             }
           : d
       ),

@@ -6,6 +6,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 export interface DownloadProgressData {
   id: string;
   progress: number | null;
+  downloaded_bytes: number;
+  total_bytes: number | null;
   speed: number;
   status: string;
 }
@@ -19,17 +21,24 @@ export interface DownloadErrorData {
   message: string;
 }
 
+export interface DownloadCancelledData {
+  id: string;
+}
+
 type ProgressCallback = (data: DownloadProgressData) => void;
 type CompletedCallback = (data: DownloadCompletedData) => void;
 type ErrorCallback = (data: DownloadErrorData) => void;
+type CancelledCallback = (data: DownloadCancelledData) => void;
 
 class EventService {
   private progressUnlistenPromise: Promise<UnlistenFn> | null = null;
   private completedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private errorUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private cancelledUnlistenPromise: Promise<UnlistenFn> | null = null;
   private progressCallbacks: Set<ProgressCallback> = new Set();
   private completedCallbacks: Set<CompletedCallback> = new Set();
   private errorCallbacks: Set<ErrorCallback> = new Set();
+  private cancelledCallbacks: Set<CancelledCallback> = new Set();
 
   /**
    * Register a listener for download progress events
@@ -104,12 +113,37 @@ class EventService {
   }
 
   /**
+   * Register a listener for download cancelled events
+   * @param callback - Function to call when cancelled event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerCancelledListener(callback: CancelledCallback): UnlistenFn {
+    this.cancelledCallbacks.add(callback);
+
+    // Only register with Tauri once
+    if (!this.cancelledUnlistenPromise) {
+      this.cancelledUnlistenPromise = listen<DownloadCancelledData>(
+        'download://cancelled',
+        (event) => {
+          this.cancelledCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    // Return unlisten function for this specific callback
+    return () => {
+      this.cancelledCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Unregister all listeners
    */
   async unregisterAll(): Promise<void> {
     this.progressCallbacks.clear();
     this.completedCallbacks.clear();
     this.errorCallbacks.clear();
+    this.cancelledCallbacks.clear();
 
     if (this.progressUnlistenPromise) {
       const unlisten = await this.progressUnlistenPromise;
@@ -127,6 +161,12 @@ class EventService {
       const unlisten = await this.errorUnlistenPromise;
       unlisten();
       this.errorUnlistenPromise = null;
+    }
+
+    if (this.cancelledUnlistenPromise) {
+      const unlisten = await this.cancelledUnlistenPromise;
+      unlisten();
+      this.cancelledUnlistenPromise = null;
     }
   }
 }

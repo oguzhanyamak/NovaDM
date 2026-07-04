@@ -31,5 +31,6 @@ pub enum DownloadStatus {
 pub struct DownloadTask {
     pub id: String,
     pub url: String,
-    pub destination: String,
+    pub filename: String,
+    pub save_location: String,
 }
