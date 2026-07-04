@@ -62,7 +62,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Windows
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
           tagName: ${{ github.ref }}
           args: --bundles wns --features production
@@ -110,7 +110,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Linux
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
           tagName: ${{ github.ref }}
           args: --bundles deb --features production
@@ -158,7 +158,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build macOS
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
           tagName: ${{ github.ref }}
           args: --bundles dmg --features production
