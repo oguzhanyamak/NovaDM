@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { cn } from '../lib/utils';
 import { Download, FolderOpen } from 'lucide-react';
+import { downloadService } from '../services/download';
 
 interface NewDownloadDialogProps {
   open: boolean;
@@ -13,6 +14,7 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
   const [saveLocation, setSaveLocation] = useState('');
   const [urlError, setUrlError] = useState('');
   const [urlTouched, setUrlTouched] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Set default save location to Downloads folder
   useEffect(() => {
@@ -92,16 +94,27 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     const error = validateUrl(url);
     if (error) {
       setUrlError(error);
       setUrlTouched(true);
       return;
     }
-    
-    alert('Download engine not implemented yet.');
-    onOpenChange(false);
+
+    setIsSubmitting(true);
+    try {
+      await downloadService.startDownload({
+        url,
+        filename,
+        saveLocation,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      console.error('Failed to start download:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCancel = () => {
@@ -202,18 +215,19 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
             <button
               type="button"
               onClick={handleCancel}
-              className="px-4 py-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground"
+              disabled={isSubmitting}
+              className="px-4 py-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleDownload}
-              disabled={!isFormValid}
+              disabled={!isFormValid || isSubmitting}
               className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               <Download className="h-4 w-4" />
-              Download
+              {isSubmitting ? 'Starting...' : 'Download'}
             </button>
           </div>
         </div>

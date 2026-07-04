@@ -1,10 +1,25 @@
 // Download service for communicating with Tauri backend
-// Will be implemented with actual API calls
+// All Tauri communication happens through this service only
 
 import { invoke } from '@tauri-apps/api/core';
 import { Download, DownloadHistory } from '../types';
 
+export interface StartDownloadParams {
+  url: string;
+  filename: string;
+  saveLocation: string;
+}
+
 export const downloadService = {
+  async startDownload(params: StartDownloadParams): Promise<void> {
+    // Only this service calls Tauri commands
+    await invoke('start_download', {
+      url: params.url,
+      filename: params.filename,
+      save_location: params.saveLocation,
+    });
+  },
+
   async getDownloads(): Promise<Download[]> {
     // Placeholder - will call Tauri command
     return [];
