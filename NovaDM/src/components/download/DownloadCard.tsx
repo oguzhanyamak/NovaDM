@@ -13,6 +13,7 @@ interface DownloadCardProps {
   status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
   progress: number;
   speed: number;
+  queuePosition?: number;
   className?: string;
 }
 
@@ -23,6 +24,7 @@ export function DownloadCard({
   status,
   progress,
   speed,
+  queuePosition,
   className
 }: DownloadCardProps) {
   const handleCancel = async () => {
@@ -62,8 +64,8 @@ export function DownloadCard({
           {status === 'downloading' && (
             <DownloadSpeedLabel speed={speed} />
           )}
-          <DownloadStatusBadge status={status} />
-          {status === 'downloading' && (
+          <DownloadStatusBadge status={status} queuePosition={queuePosition} />
+          {(status === 'downloading' || status === 'pending') && (
             <button
               onClick={handleCancel}
               className="p-1 rounded hover:bg-accent hover:text-accent-foreground"

@@ -25,20 +25,35 @@ export interface DownloadCancelledData {
   id: string;
 }
 
+export interface DownloadQueuedData {
+  id: string;
+  position: number;
+}
+
+export interface DownloadStartedData {
+  id: string;
+}
+
 type ProgressCallback = (data: DownloadProgressData) => void;
 type CompletedCallback = (data: DownloadCompletedData) => void;
 type ErrorCallback = (data: DownloadErrorData) => void;
 type CancelledCallback = (data: DownloadCancelledData) => void;
+type QueuedCallback = (data: DownloadQueuedData) => void;
+type StartedCallback = (data: DownloadStartedData) => void;
 
 class EventService {
   private progressUnlistenPromise: Promise<UnlistenFn> | null = null;
   private completedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private errorUnlistenPromise: Promise<UnlistenFn> | null = null;
   private cancelledUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private queuedUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private startedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private progressCallbacks: Set<ProgressCallback> = new Set();
   private completedCallbacks: Set<CompletedCallback> = new Set();
   private errorCallbacks: Set<ErrorCallback> = new Set();
   private cancelledCallbacks: Set<CancelledCallback> = new Set();
+  private queuedCallbacks: Set<QueuedCallback> = new Set();
+  private startedCallbacks: Set<StartedCallback> = new Set();
 
   /**
    * Register a listener for download progress events
@@ -113,6 +128,50 @@ class EventService {
   }
 
   /**
+   * Register a listener for download queued events
+   * @param callback - Function to call when queued event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerQueuedListener(callback: QueuedCallback): UnlistenFn {
+    this.queuedCallbacks.add(callback);
+
+    if (!this.queuedUnlistenPromise) {
+      this.queuedUnlistenPromise = listen<DownloadQueuedData>(
+        'download://queued',
+        (event) => {
+          this.queuedCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.queuedCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Register a listener for download started events
+   * @param callback - Function to call when started event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerStartedListener(callback: StartedCallback): UnlistenFn {
+    this.startedCallbacks.add(callback);
+
+    if (!this.startedUnlistenPromise) {
+      this.startedUnlistenPromise = listen<DownloadStartedData>(
+        'download://started',
+        (event) => {
+          this.startedCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.startedCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Register a listener for download cancelled events
    * @param callback - Function to call when cancelled event is received
    * @returns Unlisten function to remove the listener
@@ -163,10 +222,16 @@ class EventService {
       this.errorUnlistenPromise = null;
     }
 
-    if (this.cancelledUnlistenPromise) {
-      const unlisten = await this.cancelledUnlistenPromise;
+    if (this.queuedUnlistenPromise) {
+      const unlisten = await this.queuedUnlistenPromise;
       unlisten();
-      this.cancelledUnlistenPromise = null;
+      this.queuedUnlistenPromise = null;
+    }
+
+    if (this.startedUnlistenPromise) {
+      const unlisten = await this.startedUnlistenPromise;
+      unlisten();
+      this.startedUnlistenPromise = null;
     }
   }
 }

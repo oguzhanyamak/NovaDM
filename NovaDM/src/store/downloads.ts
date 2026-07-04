@@ -12,6 +12,9 @@ interface DownloadsState {
   updateDownloadProgress: (id: string, progress: number | null, downloadedBytes: number, totalBytes: number | null, speed: number) => void;
   completeDownload: (id: string) => void;
   markAsCancelled: (id: string) => void;
+  queueDownload: (id: string, position: number) => void;
+  startQueuedDownload: (id: string) => void;
+  updateQueuePosition: (id: string, position: number) => void;
 }
 
 export const useDownloadsStore = create<DownloadsState>((set) => ({ 
@@ -64,12 +67,42 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
 
   markAsCancelled: (id) =>
     set((state) => ({
+      downloads: state.downloads.filter((d) => d.id !== id),
+    })),
+
+  queueDownload: (id, position) =>
+    set((state) => ({
       downloads: state.downloads.map((d) =>
         d.id === id
           ? {
               ...d,
-              status: 'cancelled' as const,
-              speed: 0,
+              status: 'pending' as const,
+              queuePosition: position,
+            }
+          : d
+      ),
+    })),
+
+  startQueuedDownload: (id) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'downloading' as const,
+              queuePosition: undefined,
+            }
+          : d
+      ),
+    })),
+
+  updateQueuePosition: (id, position) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              queuePosition: position,
             }
           : d
       ),

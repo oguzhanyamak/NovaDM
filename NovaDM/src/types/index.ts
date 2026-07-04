@@ -10,6 +10,7 @@ export interface Download {
   createdAt: Date;
   completedAt?: Date;
   error?: string;
+  queuePosition?: number;
 }
 
 export interface DownloadHistory {

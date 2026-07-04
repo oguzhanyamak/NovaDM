@@ -6,7 +6,7 @@ import { DownloadCard } from '../components/download/DownloadCard';
 import { NewDownloadDialog } from '../components/NewDownloadDialog';
 import { useDownloadsStore } from '../store/downloads';
 import { eventService } from '../services/event';
-import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData } from '../services/event';
+import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData, DownloadQueuedData, DownloadStartedData } from '../services/event';
 
 export function Downloads() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -15,12 +15,13 @@ export function Downloads() {
   const completeDownload = useDownloadsStore((state) => state.completeDownload);
   const updateDownload = useDownloadsStore((state) => state.updateDownload);
   const markAsCancelled = useDownloadsStore((state) => state.markAsCancelled);
+  const queueDownload = useDownloadsStore((state) => state.queueDownload);
+  const startQueuedDownload = useDownloadsStore((state) => state.startQueuedDownload);
 
   // Register event listeners
   useEffect(() => {
     const unlistenProgress = eventService.registerProgressListener(
       (data: DownloadProgressData) => {
-        // Handle indeterminate progress (when content-length is unknown)
         const progress = data.progress ?? 0;
         updateDownloadProgress(data.id, progress, data.downloaded_bytes, data.total_bytes, data.speed);
       }
@@ -48,13 +49,27 @@ export function Downloads() {
       }
     );
 
+    const unlistenQueued = eventService.registerQueuedListener(
+      (data: DownloadQueuedData) => {
+        queueDownload(data.id, data.position);
+      }
+    );
+
+    const unlistenStarted = eventService.registerStartedListener(
+      (data: DownloadStartedData) => {
+        startQueuedDownload(data.id);
+      }
+    );
+
     return () => {
       unlistenProgress();
       unlistenCompleted();
       unlistenError();
       unlistenCancelled();
+      unlistenQueued();
+      unlistenStarted();
     };
-  }, [updateDownloadProgress, completeDownload, updateDownload, markAsCancelled]);
+  }, [updateDownloadProgress, completeDownload, updateDownload, markAsCancelled, queueDownload, startQueuedDownload]);
 
   const handleOpenDialog = () => {
     setIsDialogOpen(true);
@@ -89,15 +104,16 @@ export function Downloads() {
         ) : (
           <div className="space-y-3">
             {downloads.map((download) => (
-              <DownloadCard
-                key={download.id}
-                id={download.id}
-                name={download.name}
-                url={download.url}
-                status={download.status}
-                progress={download.progress}
-                speed={download.speed}
-              />
+            <DownloadCard
+              key={download.id}
+              id={download.id}
+              name={download.name}
+              url={download.url}
+              status={download.status}
+              progress={download.progress}
+              speed={download.speed}
+              queuePosition={download.queuePosition}
+            />
             ))}
           </div>
         )}

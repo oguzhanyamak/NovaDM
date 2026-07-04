@@ -9,6 +9,7 @@
 //! It lives for the entire application lifetime and is injected into commands.
 //! 
 //! Active downloads are stored in a `HashMap<String, DownloadHandle>` for O(1) lookup.
+//! Queued downloads are stored in a `VecDeque` for O(1) FIFO operations.
 //! Each handle owns a CancellationToken for graceful cancellation.
 
 use std::collections::HashMap;
@@ -21,23 +22,15 @@ use uuid::Uuid;
 use crate::download::errors::{DownloadError, Result};
 use crate::download::models::DownloadTask;
 use crate::download::utils::resolve_filename_conflict;
+use crate::download::scheduler::DownloadScheduler;
 use crate::core::DownloadHandle;
 
 /// Download manager for handling HTTP downloads
-/// 
-/// This struct is responsible for:
-/// - Starting new downloads
-/// - Tracking active downloads
-/// - Spawning download workers
-/// - Cancelling active downloads
-/// - Managing download lifecycle
-/// 
-/// # Thread Safety
-/// 
-/// All state is protected by RwLocks for concurrent access.
 pub struct DownloadManager {
     /// Active downloads indexed by ID
     active_downloads: Arc<RwLock<HashMap<String, DownloadHandle>>>,
+    /// Scheduler for queue management
+    scheduler: Arc<DownloadScheduler>,
 }
 
 impl DownloadManager {
@@ -45,20 +38,14 @@ impl DownloadManager {
     pub fn new() -> Self {
         Self {
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            scheduler: Arc::new(DownloadScheduler::new()),
         }
     }
 
     /// Start a new download
     /// 
-    /// # Arguments
-    /// * `app` - Tauri app handle for emitting events
-    /// * `url` - URL to download
-    /// * `filename` - Output filename
-    /// * `save_location` - Directory to save file
-    /// 
-    /// # Returns
-    /// * `Ok(String)` - Download ID
-    /// * `Err(DownloadError)` - Failed to start download
+    /// If under the concurrent limit, starts immediately.
+    /// Otherwise, enqueues for later.
     pub async fn start_download(
         &self,
         app: AppHandle,
@@ -67,15 +54,7 @@ impl DownloadManager {
         save_location: String,
     ) -> Result<String> {
         let download_id = Uuid::new_v4().to_string();
-        let output_path = PathBuf::from(&save_location).join(&filename);
         
-        // Create download handle with cancellation token
-        let mut handle = DownloadHandle::new(download_id.clone());
-        handle.set_output_path(output_path.to_string_lossy().to_string());
-
-        // Add to active downloads
-        self.active_downloads.write().await.insert(download_id.clone(), handle.clone());
-
         // Create task
         let task = DownloadTask {
             id: download_id.clone(),
@@ -84,78 +63,147 @@ impl DownloadManager {
             save_location,
         };
 
-        // Clone cancellation token for the worker
-        let cancellation_token = handle.cancellation_token.clone();
+        // Check if we can start immediately
+        let active_count = self.active_downloads.read().await.len();
         
-        // Spawn download task
+        if self.scheduler.can_start(active_count).await {
+            // Start immediately
+            self.start_download_immediately(app, task).await?;
+        } else {
+            // Enqueue for later
+            let position = self.scheduler.enqueue(task).await?;
+            
+            // Emit queued event
+            let _ = app.emit("download://queued", serde_json::json!({
+                "id": download_id,
+                "position": position
+            }));
+            
+            tracing::info!("Download queued: {} at position {}", download_id, position);
+        }
+
+        Ok(download_id)
+    }
+
+    /// Start a download immediately
+    async fn start_download_immediately(
+        &self,
+        app: AppHandle,
+        task: DownloadTask,
+    ) -> Result<()> {
+        let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+        
+        // Create download handle with cancellation token
+        let mut handle = DownloadHandle::new(task.id.clone());
+        handle.set_output_path(output_path.to_string_lossy().to_string());
+
+        // Add to active downloads
+        self.active_downloads.write().await.insert(task.id.clone(), handle.clone());
+
+        // Emit started event
+        let _ = app.emit("download://started", serde_json::json!({
+            "id": task.id
+        }));
+
+        // Clone for worker
+        let cancellation_token = handle.cancellation_token.clone();
         let active_downloads = self.active_downloads.clone();
+        let scheduler = self.scheduler.clone();
         let task_id = task.id.clone();
         
         tauri::async_runtime::spawn(async move {
             let result = Self::download_file(app.clone(), task, cancellation_token).await;
             
-            match result {
-                Ok(()) => {
-                    // Normal completion - already emitted completed event
-                }
-                Err(e) => {
-                    // Only emit error if it wasn't a cancellation
-                    if !matches!(&e, DownloadError::Cancelled) {
-                        tracing::error!("Download {} failed: {}", task_id, e);
-                        let _ = app.emit("download://error", serde_json::json!({
-                            "id": task_id,
-                            "message": e.to_string()
-                        }));
-                    }
+            if let Err(e) = result {
+                if !matches!(&e, DownloadError::Cancelled) {
+                    tracing::error!("Download {} failed: {}", task_id, e);
+                    let _ = app.emit("download://error", serde_json::json!({
+                        "id": task_id,
+                        "message": e.to_string()
+                    }));
                 }
             }
             
             // Remove from active downloads
             active_downloads.write().await.remove(&task_id);
+            
+            // Try to start next queued download
+            Self::try_start_next(app, active_downloads, scheduler);
         });
 
-        Ok(download_id)
+        Ok(())
     }
 
-    /// Cancel an active download
-    /// 
-    /// Finds the download by ID, cancels its token, and removes it from active downloads.
-    /// If the download doesn't exist, returns NotFound error.
-    /// If the download is already completed, returns success (no-op).
-    /// 
-    /// # Arguments
-    /// * `id` - Download ID to cancel
-    /// 
-    /// # Returns
-    /// * `Ok(())` - Download cancelled or already completed
-    /// * `Err(DownloadError)` - Download not found
+    /// Try to start the next queued download
+    fn try_start_next(
+        app: AppHandle,
+        active_downloads: Arc<RwLock<HashMap<String, DownloadHandle>>>,
+        scheduler: Arc<DownloadScheduler>,
+    ) {
+        tauri::async_runtime::spawn(async move {
+            // Get next task from queue
+            if let Some((id, task)) = scheduler.pop_next().await {
+                let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+                
+                // Create handle
+                let mut handle = DownloadHandle::new(id.clone());
+                handle.set_output_path(output_path.to_string_lossy().to_string());
+                
+                // Add to active
+                active_downloads.write().await.insert(id.clone(), handle.clone());
+                
+                // Emit started event
+                let _ = app.emit("download://started", serde_json::json!({
+                    "id": id
+                }));
+                
+                // Clone token
+                let cancellation_token = handle.cancellation_token.clone();
+                
+                // Spawn worker
+                tauri::async_runtime::spawn(async move {
+                    let result = Self::download_file(app.clone(), task, cancellation_token).await;
+                    
+                    if let Err(e) = result {
+                        if !matches!(&e, DownloadError::Cancelled) {
+                            let _ = app.emit("download://error", serde_json::json!({
+                                "id": id,
+                                "message": e.to_string()
+                            }));
+                        }
+                    }
+                    
+                    active_downloads.write().await.remove(&id);
+                    
+                    // Try next again
+                    Self::try_start_next(app, active_downloads, scheduler);
+                });
+            }
+        });
+    }
+
+    /// Cancel a download (active or queued)
     pub async fn cancel_download(&self, id: &str) -> Result<()> {
-        let mut downloads = self.active_downloads.write().await;
-        
-        if let Some(handle) = downloads.remove(id) {
-            // Signal cancellation to the worker
-            handle.cancellation_token.cancel();
-            tracing::info!("Download cancelled: {}", id);
-            Ok(())
-        } else {
-            Err(DownloadError::NotFound(id.to_string()))
+        // Check if it's active
+        {
+            let mut downloads = self.active_downloads.write().await;
+            if let Some(handle) = downloads.remove(id) {
+                handle.cancellation_token.cancel();
+                tracing::info!("Active download cancelled: {}", id);
+                return Ok(());
+            }
         }
+        
+        // Check if it's queued
+        if self.scheduler.dequeue(id).await.is_some() {
+            tracing::info!("Queued download cancelled: {}", id);
+            return Ok(());
+        }
+        
+        Err(DownloadError::NotFound(id.to_string()))
     }
 
     /// Download a file with streaming and buffered writing
-    /// 
-    /// This function:
-    /// 1. Sends HTTP GET request
-    /// 2. Streams response body in chunks
-    /// 3. Checks cancellation token periodically
-    /// 4. Writes to disk using BufWriter for efficiency
-    /// 5. Emits progress events for each chunk
-    /// 6. Emits completion event when done
-    /// 7. Deletes partial file if cancelled
-    /// 
-    /// # Memory Usage
-    /// For a 20 GB file, memory usage stays constant at ~8-64 KB
-    /// because we stream and buffer only small chunks.
     async fn download_file(
         app: AppHandle,
         task: DownloadTask,
@@ -180,17 +228,11 @@ impl DownloadManager {
         while let Some(chunk_result) = stream.next().await {
             // Check for cancellation
             if cancellation_token.is_cancelled() {
-                // Close the writer
                 drop(writer);
-                
-                // Delete partial file
                 let _ = tokio::fs::remove_file(&output_path).await;
-                
-                // Emit cancelled event
                 let _ = app.emit("download://cancelled", serde_json::json!({
                     "id": task.id
                 }));
-                
                 tracing::info!("Download cancelled: {}", task.filename);
                 return Err(DownloadError::Cancelled);
             }
@@ -198,18 +240,13 @@ impl DownloadManager {
             let chunk = chunk_result
                 .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
 
-            // Write chunk to disk
             writer.write_all(&chunk).await
                 .map_err(|e| DownloadError::IoError(e.to_string()))?;
 
-            // Update progress
             downloaded += chunk.len() as u64;
-
-            // Emit progress event for every chunk
             Self::emit_progress(&app, &task.id, downloaded, content_length)?;
         }
 
-        // Check for cancellation before finalizing
         if cancellation_token.is_cancelled() {
             drop(writer);
             let _ = tokio::fs::remove_file(&output_path).await;
@@ -219,13 +256,11 @@ impl DownloadManager {
             return Err(DownloadError::Cancelled);
         }
 
-        // Flush buffer and sync to disk
         writer.flush().await
             .map_err(|e| DownloadError::IoError(e.to_string()))?;
         
         tracing::info!("Download completed: {}", task.filename);
 
-        // Emit completion event
         let _ = app.emit("download://completed", serde_json::json!({
             "id": task.id
         }));
@@ -234,20 +269,14 @@ impl DownloadManager {
     }
 
     /// Build the output file path and ensure directory exists
-    /// 
-    /// If the file already exists, automatically renames it:
-    /// - movie.mp4 → movie (1).mp4
-    /// - movie (1).mp4 → movie (2).mp4
     async fn build_output_path(task: &DownloadTask) -> Result<PathBuf> {
         let initial_path = PathBuf::from(&task.save_location).join(&task.filename);
         
-        // Ensure directory exists
         if let Some(parent) = initial_path.parent() {
             tokio::fs::create_dir_all(parent).await
                 .map_err(|e| crate::download::utils::categorize_io_error(&e))?;
         }
 
-        // Resolve filename conflicts
         let output_path = resolve_filename_conflict(&initial_path)
             .map_err(|e| crate::download::utils::categorize_io_error(&e))?;
 
@@ -269,7 +298,7 @@ impl DownloadManager {
         Ok(response)
     }
 
-    /// Emit progress event with downloaded and total bytes
+    /// Emit progress event
     fn emit_progress(
         app: &AppHandle,
         id: &str,
@@ -299,6 +328,16 @@ impl DownloadManager {
     pub async fn get_active_downloads(&self) -> Vec<DownloadHandle> {
         self.active_downloads.read().await.values().cloned().collect()
     }
+
+    /// Get queue position for a download
+    pub async fn get_queue_position(&self, id: &str) -> Option<usize> {
+        self.scheduler.get_position(id).await
+    }
+
+    /// Get queue length
+    pub async fn queue_length(&self) -> usize {
+        self.scheduler.len().await
+    }
 }
 
 impl Default for DownloadManager {
@@ -320,11 +359,7 @@ mod tests {
     #[tokio::test]
     async fn test_download_manager_lifecycle() {
         let manager = DownloadManager::new();
-        
-        // Initially empty
         assert!(manager.get_active_downloads().await.is_empty());
-        
-        // Can check if download is active
         assert!(!manager.is_active("nonexistent").await);
     }
 

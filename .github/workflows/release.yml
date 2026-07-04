@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Detect project structure
+  detect-project:
+    runs-on: ubuntu-latest
+    outputs:
+      working-directory: ${{ steps.detect.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          if [ -f "package.json" ] && [ -d "src-tauri" ]; then
+            echo "working-directory=." >> $GITHUB_OUTPUT
+          elif [ -f "NovaDM/package.json" ] && [ -d "NovaDM/src-tauri" ]; then
+            echo "working-directory=NovaDM" >> $GITHUB_OUTPUT
+          else
+            echo "working-directory=." >> $GITHUB_OUTPUT
+          fi
+
+  # Build for Windows
+  build-windows:
+    runs-on: windows-latest
+    needs: detect-project
+    defaults:
+      run:
+        working-directory: ${{ needs.detect-project.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Windows
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tagName: ${{ github.ref }}
+          args: --bundles wns --features production
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ${{ needs.detect-project.outputs.working-directory }}/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 30
+
+  # Build for Linux
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: detect-project
+    defaults:
+      run:
+        working-directory: ${{ needs.detect-project.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Linux
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tagName: ${{ github.ref }}
+          args: --bundles deb --features production
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: ${{ needs.detect-project.outputs.working-directory }}/src-tauri/target/release/bundle/deb/*.deb
+          retention-days: 30
+
+  # Build for macOS
+  build-macos:
+    runs-on: macos-latest
+    needs: detect-project
+    defaults:
+      run:
+        working-directory: ${{ needs.detect-project.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build macOS
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tagName: ${{ github.ref }}
+          args: --bundles dmg --features production
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: ${{ needs.detect-project.outputs.working-directory }}/src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 30
+
+  # Create GitHub Release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux, build-macos]
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

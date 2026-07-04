@@ -1,0 +1,32 @@
+# Code owners for NovaDM
+# Each line specifies a path pattern followed by one or more owners
+
+# Frontend code - TypeScript/React
+/src/**/*.ts
+/src/**/*.tsx
+/package.json
+/package-lock.json
+/tsconfig.json
+/vite.config.ts
+@oguzhanyamak
+
+# Backend code - Rust
+/src-tauri/**/*.rs
+/Cargo.toml
+/Cargo.lock
+@oguzhanyamak
+
+# GitHub workflows
+/.github/workflows/**/*.yml
+/.github/workflows/**/*.yaml
+@oguzhanyamak
+
+# Documentation
+*.md
+/docs/**
+@oguzhanyamak
+
+# Configuration files
+/.gitignore
+/tauri.conf.json
+@oguzhanyamak

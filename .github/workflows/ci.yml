@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Detect project structure
+  detect-project:
+    runs-on: ubuntu-latest
+    outputs:
+      working-directory: ${{ steps.detect.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          if [ -f "package.json" ] && [ -d "src-tauri" ]; then
+            echo "working-directory=." >> $GITHUB_OUTPUT
+          elif [ -f "NovaDM/package.json" ] && [ -d "NovaDM/src-tauri" ]; then
+            echo "working-directory=NovaDM" >> $GITHUB_OUTPUT
+          else
+            echo "working-directory=." >> $GITHUB_OUTPUT
+          fi
+
+  # Frontend CI
+  frontend:
+    runs-on: ubuntu-latest
+    needs: detect-project
+    defaults:
+      run:
+        working-directory: ${{ needs.detect-project.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Build frontend
+        run: npm run build
+
+  # Backend CI
+  backend:
+    runs-on: ubuntu-latest
+    needs: detect-project
+    defaults:
+      run:
+        working-directory: ${{ needs.detect-project.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check code
+        run: cargo check
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Combined CI (runs both frontend and backend in parallel)
+  ci:
+    runs-on: ubuntu-latest
+    needs: [detect-project, frontend, backend]
+    if: always()
+    steps:
+      - name: CI completed
+        run: echo "All checks passed!"

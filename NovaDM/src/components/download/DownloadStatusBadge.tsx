@@ -2,10 +2,11 @@ import { cn } from '../../lib/utils';
 
 interface DownloadStatusBadgeProps {
   status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  queuePosition?: number;
   className?: string;
 }
 
-export function DownloadStatusBadge({ status, className }: DownloadStatusBadgeProps) {
+export function DownloadStatusBadge({ status, queuePosition, className }: DownloadStatusBadgeProps) {
   const getStatusConfig = () => {
     switch (status) {
       case 'downloading':
@@ -35,6 +36,12 @@ export function DownloadStatusBadge({ status, className }: DownloadStatusBadgePr
         };
       case 'pending':
       default:
+        if (queuePosition) {
+          return {
+            label: `Queued (#${queuePosition})`,
+            className: 'bg-purple-500/10 text-purple-500 border-purple-500/20'
+          };
+        }
         return {
           label: 'Pending',
           className: 'bg-muted text-muted-foreground border-border'
