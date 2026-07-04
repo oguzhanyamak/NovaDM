@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { Download, Plus } from 'lucide-react';
 import { useDownloadsStore } from '../store/downloads';
+import { NewDownloadDialog } from '../components/NewDownloadDialog';
 
 export function Downloads() {
   const downloads = useDownloadsStore((state) => state.downloads);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   return (
     <div className="flex flex-col h-full">
@@ -14,7 +17,10 @@ export function Downloads() {
               Manage your downloads
             </p>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
+          <button 
+            onClick={() => setIsDialogOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          >
             <Plus className="w-4 h-4" />
             New Download
           </button>
@@ -69,6 +75,11 @@ export function Downloads() {
           </div>
         )}
       </main>
+
+      <NewDownloadDialog 
+        open={isDialogOpen} 
+        onOpenChange={setIsDialogOpen} 
+      />
     </div>
   );
 }
