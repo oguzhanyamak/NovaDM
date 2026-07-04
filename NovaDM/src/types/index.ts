@@ -9,6 +9,7 @@ export interface Download {
   speed: number;
   createdAt: Date;
   completedAt?: Date;
+  error?: string;
 }
 
 export interface DownloadHistory {

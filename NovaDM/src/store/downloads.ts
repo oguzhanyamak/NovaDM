@@ -9,6 +9,8 @@ interface DownloadsState {
   addDownload: (download: Download) => void;
   removeDownload: (id: string) => void;
   updateDownload: (id: string, updates: Partial<Download>) => void;
+  updateDownloadProgress: (id: string, progress: number, speed: number) => void;
+  completeDownload: (id: string) => void;
 }
 
 export const useDownloadsStore = create<DownloadsState>((set) => ({
@@ -28,6 +30,33 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
     set((state) => ({
       downloads: state.downloads.map((d) =>
         d.id === id ? { ...d, ...updates } : d
+      ),
+    })),
+  updateDownloadProgress: (id, progress, speed) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              progress,
+              speed,
+              downloaded: Math.floor((progress / 100) * d.size),
+            }
+          : d
+      ),
+    })),
+  completeDownload: (id) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'completed' as const,
+              progress: 100,
+              speed: 0,
+              completedAt: new Date(),
+            }
+          : d
       ),
     })),
 }));

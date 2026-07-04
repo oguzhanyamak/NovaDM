@@ -1,0 +1,135 @@
+// Event service for listening to Tauri events
+// Only this service may listen to Tauri events
+
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+
+export interface DownloadProgressData {
+  id: string;
+  progress: number | null;
+  speed: number;
+  status: string;
+}
+
+export interface DownloadCompletedData {
+  id: string;
+}
+
+export interface DownloadErrorData {
+  id: string;
+  message: string;
+}
+
+type ProgressCallback = (data: DownloadProgressData) => void;
+type CompletedCallback = (data: DownloadCompletedData) => void;
+type ErrorCallback = (data: DownloadErrorData) => void;
+
+class EventService {
+  private progressUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private completedUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private errorUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private progressCallbacks: Set<ProgressCallback> = new Set();
+  private completedCallbacks: Set<CompletedCallback> = new Set();
+  private errorCallbacks: Set<ErrorCallback> = new Set();
+
+  /**
+   * Register a listener for download progress events
+   * @param callback - Function to call when progress event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerProgressListener(callback: ProgressCallback): UnlistenFn {
+    this.progressCallbacks.add(callback);
+
+    // Only register with Tauri once
+    if (!this.progressUnlistenPromise) {
+      this.progressUnlistenPromise = listen<DownloadProgressData>(
+        'download://progress',
+        (event) => {
+          this.progressCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    // Return unlisten function for this specific callback
+    return () => {
+      this.progressCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Register a listener for download completed events
+   * @param callback - Function to call when completed event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerCompletedListener(callback: CompletedCallback): UnlistenFn {
+    this.completedCallbacks.add(callback);
+
+    // Only register with Tauri once
+    if (!this.completedUnlistenPromise) {
+      this.completedUnlistenPromise = listen<DownloadCompletedData>(
+        'download://completed',
+        (event) => {
+          this.completedCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    // Return unlisten function for this specific callback
+    return () => {
+      this.completedCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Register a listener for download error events
+   * @param callback - Function to call when error event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerErrorListener(callback: ErrorCallback): UnlistenFn {
+    this.errorCallbacks.add(callback);
+
+    // Only register with Tauri once
+    if (!this.errorUnlistenPromise) {
+      this.errorUnlistenPromise = listen<DownloadErrorData>(
+        'download://error',
+        (event) => {
+          this.errorCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    // Return unlisten function for this specific callback
+    return () => {
+      this.errorCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Unregister all listeners
+   */
+  async unregisterAll(): Promise<void> {
+    this.progressCallbacks.clear();
+    this.completedCallbacks.clear();
+    this.errorCallbacks.clear();
+
+    if (this.progressUnlistenPromise) {
+      const unlisten = await this.progressUnlistenPromise;
+      unlisten();
+      this.progressUnlistenPromise = null;
+    }
+
+    if (this.completedUnlistenPromise) {
+      const unlisten = await this.completedUnlistenPromise;
+      unlisten();
+      this.completedUnlistenPromise = null;
+    }
+
+    if (this.errorUnlistenPromise) {
+      const unlisten = await this.errorUnlistenPromise;
+      unlisten();
+      this.errorUnlistenPromise = null;
+    }
+  }
+}
+
+// Export singleton instance
+export const eventService = new EventService();

@@ -10,7 +10,7 @@ mod download;
 mod storage;
 mod utils;
 
-use api::{ping, get_app_state, start_download};
+use api::{ping, get_app_state, start_download, start_fake_download};
 use core::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -24,7 +24,8 @@ pub fn run() {
             greet,
             ping,
             get_app_state,
-            start_download
+            start_download,
+            start_fake_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

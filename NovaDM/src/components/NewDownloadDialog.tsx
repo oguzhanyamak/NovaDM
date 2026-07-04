@@ -129,6 +129,11 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
 
   const isFormValid = url.trim() && !validateUrl(url) && filename.trim();
 
+  // Don't render anything if dialog is not open
+  if (!open) {
+    return null;
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onKeyDown={handleKeyDown}>
       {/* Backdrop */}
@@ -138,7 +143,7 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
       />
       
       {/* Dialog Content */}
-      <div className="relative z-50 w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-lg">
+      <div className="relative z-50 w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="space-y-4">
           <h2 className="text-2xl font-bold text-foreground">
             New Download
