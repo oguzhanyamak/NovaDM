@@ -11,7 +11,7 @@
 //! Active downloads are stored in a `HashMap<String, DownloadHandle>` for O(1) lookup.
 //! Queued downloads are stored in a `VecDeque` for O(1) FIFO operations.
 //! Failed downloads are stored in a `HashMap` for retry.
-//! Each handle owns a CancellationToken for graceful cancellation.
+//! Metadata is persisted to disk for potential resume support.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,6 +24,8 @@ use crate::download::errors::{DownloadError, Result};
 use crate::download::models::DownloadTask;
 use crate::download::utils::resolve_filename_conflict;
 use crate::download::scheduler::DownloadScheduler;
+use crate::download::metadata::{DownloadMetadata, MetadataRepository};
+use crate::download::resume_detector::ResumeCapabilityDetector;
 use crate::core::DownloadHandle;
 
 /// Download manager for handling HTTP downloads
@@ -34,6 +36,10 @@ pub struct DownloadManager {
     scheduler: Arc<DownloadScheduler>,
     /// Failed downloads indexed by ID (for retry)
     failed_downloads: Arc<RwLock<HashMap<String, DownloadTask>>>,
+    /// Metadata repository for persistence
+    metadata_repo: MetadataRepository,
+    /// Resume capability detector
+    resume_detector: ResumeCapabilityDetector,
 }
 
 impl DownloadManager {
@@ -43,6 +49,8 @@ impl DownloadManager {
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             scheduler: Arc::new(DownloadScheduler::new()),
             failed_downloads: Arc::new(RwLock::new(HashMap::new())),
+            metadata_repo: MetadataRepository::new(),
+            resume_detector: ResumeCapabilityDetector::new(),
         }
     }
 
@@ -166,6 +174,19 @@ impl DownloadManager {
         // Add to active downloads
         self.active_downloads.write().await.insert(task.id.clone(), handle.clone());
 
+        // Create and save metadata
+        let metadata = DownloadMetadata::new(
+            task.id.clone(),
+            task.url.clone(),
+            task.filename.clone(),
+            output_path.clone(),
+        );
+        
+        // Save metadata (ignore errors - don't crash download)
+        if let Err(e) = self.metadata_repo.save(&metadata).await {
+            tracing::warn!("Failed to save metadata: {}", e);
+        }
+
         // Emit started event
         let _ = app.emit("download://started", serde_json::json!({
             "id": task.id
@@ -176,11 +197,13 @@ impl DownloadManager {
         let active_downloads = self.active_downloads.clone();
         let scheduler = self.scheduler.clone();
         let failed_downloads = self.failed_downloads.clone();
+        let metadata_repo = self.metadata_repo.clone();
+        let resume_detector = self.resume_detector.clone();
         let task_id = task.id.clone();
         let task_for_retry = task.clone();
         
         tauri::async_runtime::spawn(async move {
-            let result = Self::download_file(app.clone(), task, cancellation_token).await;
+            let result = Self::download_file(app.clone(), task, cancellation_token, metadata_repo, resume_detector).await;
             
             if let Err(e) = result {
                 if !matches!(&e, DownloadError::Cancelled) {
@@ -233,7 +256,7 @@ impl DownloadManager {
                 
                 // Spawn worker
                 tauri::async_runtime::spawn(async move {
-                    let result = Self::download_file(app.clone(), task, cancellation_token).await;
+                    let result = Self::download_file(app.clone(), task, cancellation_token, MetadataRepository::new(), ResumeCapabilityDetector::new()).await;
                     
                     if let Err(e) = result {
                         if !matches!(&e, DownloadError::Cancelled) {
@@ -261,6 +284,12 @@ impl DownloadManager {
             if let Some(handle) = downloads.remove(id) {
                 handle.cancellation_token.cancel();
                 tracing::info!("Active download cancelled: {}", id);
+                
+                // Delete metadata on cancellation
+                if let Err(e) = self.metadata_repo.delete(id).await {
+                    tracing::warn!("Failed to delete metadata: {}", e);
+                }
+                
                 return Ok(());
             }
         }
@@ -279,6 +308,8 @@ impl DownloadManager {
         app: AppHandle,
         task: DownloadTask,
         cancellation_token: tokio_util::sync::CancellationToken,
+        metadata_repo: MetadataRepository,
+        resume_detector: ResumeCapabilityDetector,
     ) -> Result<()> {
         tracing::info!("Starting download: {} -> {}", task.url, task.filename);
 
@@ -286,6 +317,23 @@ impl DownloadManager {
         let response = Self::send_request(&task.url).await?;
         let content_length = response.content_length();
         let mut downloaded: u64 = 0;
+        
+        // Detect resume capability
+        let capability = resume_detector.detect(&response);
+        
+        // Create metadata with resume capability
+        let mut metadata = DownloadMetadata::new(
+            task.id.clone(),
+            task.url.clone(),
+            task.filename.clone(),
+            output_path.clone(),
+        );
+        metadata.set_resume_capability(capability.resume_supported);
+        
+        // Save initial metadata with capability
+        if let Err(e) = metadata_repo.save(&metadata).await {
+            tracing::warn!("Failed to save metadata: {}", e);
+        }
 
         // Create file with buffered writer for performance
         let file = tokio::fs::File::create(&output_path).await
@@ -305,6 +353,12 @@ impl DownloadManager {
                     "id": task.id
                 }));
                 tracing::info!("Download cancelled: {}", task.filename);
+                
+                // Delete metadata on cancellation
+                if let Err(e) = metadata_repo.delete(&task.id).await {
+                    tracing::warn!("Failed to delete metadata: {}", e);
+                }
+                
                 return Err(DownloadError::Cancelled);
             }
 
@@ -315,6 +369,15 @@ impl DownloadManager {
                 .map_err(|e| DownloadError::IoError(e.to_string()))?;
 
             downloaded += chunk.len() as u64;
+            
+            // Update metadata periodically (every 1MB or so)
+            if downloaded % (1024 * 1024) == 0 || downloaded == content_length.unwrap_or(0) {
+                metadata.update_progress(downloaded, content_length);
+                if let Err(e) = metadata_repo.update(&metadata).await {
+                    tracing::warn!("Failed to update metadata: {}", e);
+                }
+            }
+            
             Self::emit_progress(&app, &task.id, downloaded, content_length)?;
         }
 
@@ -324,6 +387,11 @@ impl DownloadManager {
             let _ = app.emit("download://cancelled", serde_json::json!({
                 "id": task.id
             }));
+            
+            if let Err(e) = metadata_repo.delete(&task.id).await {
+                tracing::warn!("Failed to delete metadata: {}", e);
+            }
+            
             return Err(DownloadError::Cancelled);
         }
 
@@ -331,6 +399,11 @@ impl DownloadManager {
             .map_err(|e| DownloadError::IoError(e.to_string()))?;
         
         tracing::info!("Download completed: {}", task.filename);
+
+        // Delete metadata on completion
+        if let Err(e) = metadata_repo.delete(&task.id).await {
+            tracing::warn!("Failed to delete metadata: {}", e);
+        }
 
         let _ = app.emit("download://completed", serde_json::json!({
             "id": task.id
