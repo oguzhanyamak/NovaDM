@@ -26,6 +26,7 @@ use crate::download::utils::resolve_filename_conflict;
 use crate::download::scheduler::DownloadScheduler;
 use crate::download::metadata::{DownloadMetadata, MetadataRepository};
 use crate::download::resume_detector::ResumeCapabilityDetector;
+use crate::download::partial_file::PartialFileManager;
 use crate::core::DownloadHandle;
 
 /// Download manager for handling HTTP downloads
@@ -40,6 +41,8 @@ pub struct DownloadManager {
     metadata_repo: MetadataRepository,
     /// Resume capability detector
     resume_detector: ResumeCapabilityDetector,
+    /// Partial file manager
+    partial_file_manager: PartialFileManager,
 }
 
 impl DownloadManager {
@@ -51,6 +54,7 @@ impl DownloadManager {
             failed_downloads: Arc::new(RwLock::new(HashMap::new())),
             metadata_repo: MetadataRepository::new(),
             resume_detector: ResumeCapabilityDetector::new(),
+            partial_file_manager: PartialFileManager::new(),
         }
     }
 
@@ -166,6 +170,7 @@ impl DownloadManager {
         task: DownloadTask,
     ) -> Result<()> {
         let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+        let part_path = self.partial_file_manager.part_path(&output_path);
         
         // Create download handle with cancellation token
         let mut handle = DownloadHandle::new(task.id.clone());
@@ -174,13 +179,14 @@ impl DownloadManager {
         // Add to active downloads
         self.active_downloads.write().await.insert(task.id.clone(), handle.clone());
 
-        // Create and save metadata
-        let metadata = DownloadMetadata::new(
+        // Create and save metadata with partial path
+        let mut metadata = DownloadMetadata::new(
             task.id.clone(),
             task.url.clone(),
             task.filename.clone(),
             output_path.clone(),
         );
+        metadata.set_partial_path(part_path.clone());
         
         // Save metadata (ignore errors - don't crash download)
         if let Err(e) = self.metadata_repo.save(&metadata).await {
@@ -199,11 +205,19 @@ impl DownloadManager {
         let failed_downloads = self.failed_downloads.clone();
         let metadata_repo = self.metadata_repo.clone();
         let resume_detector = self.resume_detector.clone();
+        let partial_file_manager = self.partial_file_manager.clone();
         let task_id = task.id.clone();
         let task_for_retry = task.clone();
         
         tauri::async_runtime::spawn(async move {
-            let result = Self::download_file(app.clone(), task, cancellation_token, metadata_repo, resume_detector).await;
+            let result = Self::download_file(
+                app.clone(),
+                task,
+                cancellation_token,
+                metadata_repo,
+                resume_detector,
+                partial_file_manager,
+            ).await;
             
             if let Err(e) = result {
                 if !matches!(&e, DownloadError::Cancelled) {
@@ -238,6 +252,7 @@ impl DownloadManager {
             // Get next task from queue
             if let Some((id, task)) = scheduler.pop_next().await {
                 let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+                let _part_path = PartialFileManager::new().part_path(&output_path);
                 
                 // Create handle
                 let mut handle = DownloadHandle::new(id.clone());
@@ -256,7 +271,14 @@ impl DownloadManager {
                 
                 // Spawn worker
                 tauri::async_runtime::spawn(async move {
-                    let result = Self::download_file(app.clone(), task, cancellation_token, MetadataRepository::new(), ResumeCapabilityDetector::new()).await;
+                    let result = Self::download_file(
+                        app.clone(),
+                        task,
+                        cancellation_token,
+                        MetadataRepository::new(),
+                        ResumeCapabilityDetector::new(),
+                        PartialFileManager::new(),
+                    ).await;
                     
                     if let Err(e) = result {
                         if !matches!(&e, DownloadError::Cancelled) {
@@ -285,6 +307,15 @@ impl DownloadManager {
                 handle.cancellation_token.cancel();
                 tracing::info!("Active download cancelled: {}", id);
                 
+                // Clean up .part file on cancellation
+                if let Some(metadata) = self.metadata_repo.load(id).await.unwrap_or(None) {
+                    if let Some(part_path) = metadata.partial_path {
+                        if let Err(e) = self.partial_file_manager.cleanup(&part_path).await {
+                            tracing::warn!("Failed to cleanup part file: {}", e);
+                        }
+                    }
+                }
+                
                 // Delete metadata on cancellation
                 if let Err(e) = self.metadata_repo.delete(id).await {
                     tracing::warn!("Failed to delete metadata: {}", e);
@@ -310,10 +341,12 @@ impl DownloadManager {
         cancellation_token: tokio_util::sync::CancellationToken,
         metadata_repo: MetadataRepository,
         resume_detector: ResumeCapabilityDetector,
+        partial_file_manager: PartialFileManager,
     ) -> Result<()> {
         tracing::info!("Starting download: {} -> {}", task.url, task.filename);
 
         let output_path = Self::build_output_path(&task).await?;
+        let part_path = partial_file_manager.part_path(&output_path);
         let response = Self::send_request(&task.url).await?;
         let content_length = response.content_length();
         let mut downloaded: u64 = 0;
@@ -321,13 +354,14 @@ impl DownloadManager {
         // Detect resume capability
         let capability = resume_detector.detect(&response);
         
-        // Create metadata with resume capability
+        // Create metadata with resume capability and partial path
         let mut metadata = DownloadMetadata::new(
             task.id.clone(),
             task.url.clone(),
             task.filename.clone(),
             output_path.clone(),
         );
+        metadata.set_partial_path(part_path.clone());
         metadata.set_resume_capability(capability.resume_supported);
         
         // Save initial metadata with capability
@@ -335,8 +369,8 @@ impl DownloadManager {
             tracing::warn!("Failed to save metadata: {}", e);
         }
 
-        // Create file with buffered writer for performance
-        let file = tokio::fs::File::create(&output_path).await
+        // Create .part file with buffered writer for performance
+        let file = tokio::fs::File::create(&part_path).await
             .map_err(|e| DownloadError::IoError(e.to_string()))?;
         let mut writer = BufWriter::new(file);
 
@@ -348,7 +382,7 @@ impl DownloadManager {
             // Check for cancellation
             if cancellation_token.is_cancelled() {
                 drop(writer);
-                let _ = tokio::fs::remove_file(&output_path).await;
+                let _ = tokio::fs::remove_file(&part_path).await;
                 let _ = app.emit("download://cancelled", serde_json::json!({
                     "id": task.id
                 }));
@@ -383,7 +417,7 @@ impl DownloadManager {
 
         if cancellation_token.is_cancelled() {
             drop(writer);
-            let _ = tokio::fs::remove_file(&output_path).await;
+            let _ = tokio::fs::remove_file(&part_path).await;
             let _ = app.emit("download://cancelled", serde_json::json!({
                 "id": task.id
             }));
@@ -398,6 +432,18 @@ impl DownloadManager {
         writer.flush().await
             .map_err(|e| DownloadError::IoError(e.to_string()))?;
         
+        // Atomically rename .part to final file
+        if let Err(e) = partial_file_manager.finalize(&part_path).await {
+            tracing::error!("Failed to finalize download: {}", e);
+            let _ = app.emit("download://error", serde_json::json!({
+                "id": task.id,
+                "message": e.to_string()
+            }));
+            
+            // Keep .part file for potential future resume
+            return Err(DownloadError::IoError(e.to_string()));
+        }
+
         tracing::info!("Download completed: {}", task.filename);
 
         // Delete metadata on completion

@@ -11,6 +11,7 @@ pub mod utils;
 pub mod scheduler;
 pub mod metadata;
 pub mod resume_detector;
+pub mod partial_file;
 
 pub use manager::DownloadManager;
 pub use models::DownloadInfo;
@@ -19,3 +20,4 @@ pub use utils::resolve_filename_conflict;
 pub use scheduler::{DownloadScheduler, DownloadState};
 pub use metadata::{DownloadMetadata, MetadataRepository};
 pub use resume_detector::{ResumeCapability, ResumeCapabilityDetector};
+pub use partial_file::PartialFileManager;

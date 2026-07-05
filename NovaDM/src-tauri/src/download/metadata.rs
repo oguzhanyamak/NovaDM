@@ -17,8 +17,11 @@ pub struct DownloadMetadata {
     pub url: String,
     /// Output filename
     pub filename: String,
-    /// Full output path
+    /// Full output path (final file)
     pub output_path: PathBuf,
+    /// Partial file path (for incomplete downloads)
+    #[serde(default)]
+    pub partial_path: Option<PathBuf>,
     /// Total bytes to download (if known)
     pub total_bytes: Option<u64>,
     /// Bytes downloaded so far
@@ -54,6 +57,7 @@ impl DownloadMetadata {
             url,
             filename,
             output_path,
+            partial_path: None,
             total_bytes: None,
             downloaded_bytes: 0,
             etag: None,
@@ -62,6 +66,15 @@ impl DownloadMetadata {
             updated_at: now,
             resume_supported: false,
         }
+    }
+
+    /// Set partial path
+    pub fn set_partial_path(&mut self, path: PathBuf) {
+        self.partial_path = Some(path);
+        self.updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
     }
 
     /// Set resume capability
