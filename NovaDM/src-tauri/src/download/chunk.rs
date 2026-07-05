@@ -25,6 +25,8 @@ pub struct DownloadChunk {
     pub cancellation_token: Arc<tokio_util::sync::CancellationToken>,
     /// Pause token
     pub pause_token: Arc<tokio_util::sync::CancellationToken>,
+    /// Bandwidth limiter (optional)
+    pub bandwidth_limiter: Option<Arc<crate::download::bandwidth::BandwidthLimiter>>,
 }
 
 impl DownloadChunk {
@@ -43,13 +45,21 @@ impl DownloadChunk {
             downloaded: 0,
             cancellation_token,
             pause_token,
+            bandwidth_limiter: None,
         }
+    }
+
+    /// Set the bandwidth limiter
+    pub fn with_bandwidth_limiter(mut self, limiter: Arc<crate::download::bandwidth::BandwidthLimiter>) -> Self {
+        self.bandwidth_limiter = Some(limiter);
+        self
     }
 
     /// Download this chunk
     /// 
     /// Uses HTTP Range header to download only this chunk's bytes.
     /// Writes directly to the file at the correct position.
+    /// Respects the global bandwidth limiter if set.
     pub async fn download(
         &mut self,
         url: &str,
@@ -93,6 +103,11 @@ impl DownloadChunk {
 
             let chunk = chunk_result
                 .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+
+            // Acquire bandwidth tokens if limiter is set
+            if let Some(ref limiter) = self.bandwidth_limiter {
+                limiter.acquire(chunk.len() as u64).await;
+            }
 
             // Calculate write position
             let write_pos = self.start + self.downloaded;

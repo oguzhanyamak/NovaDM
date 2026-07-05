@@ -13,6 +13,7 @@ pub mod metadata;
 pub mod resume_detector;
 pub mod partial_file;
 pub mod recovery;
+pub mod bandwidth;
 
 pub use manager::DownloadManager;
 pub use models::DownloadInfo;
@@ -23,3 +24,4 @@ pub use metadata::{DownloadMetadata, MetadataRepository};
 pub use resume_detector::{ResumeCapability, ResumeCapabilityDetector};
 pub use partial_file::PartialFileManager;
 pub use recovery::{RecoveryCandidate, RecoveryService};
+pub use bandwidth::BandwidthLimiter;

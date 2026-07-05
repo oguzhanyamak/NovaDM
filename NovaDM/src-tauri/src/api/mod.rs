@@ -200,3 +200,16 @@ pub async fn get_recovery_candidates() -> Result<Vec<RecoveryCandidate>, String>
     let candidates = service.scan().await;
     Ok(candidates)
 }
+
+#[tauri::command]
+pub async fn set_bandwidth_limit(
+    download_manager: State<'_, DownloadManager>,
+    limit_kb_per_sec: u64,
+) -> Result<(), String> {
+    // Convert KB/s to bytes/s
+    let limit_bytes_per_sec = limit_kb_per_sec * 1024;
+    download_manager
+        .set_bandwidth_limit(limit_bytes_per_sec)
+        .await;
+    Ok(())
+}

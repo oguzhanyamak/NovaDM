@@ -27,6 +27,7 @@ use crate::download::scheduler::DownloadScheduler;
 use crate::download::metadata::{DownloadMetadata, MetadataRepository};
 use crate::download::resume_detector::ResumeCapabilityDetector;
 use crate::download::partial_file::PartialFileManager;
+use crate::download::bandwidth::BandwidthLimiter;
 use crate::core::DownloadHandle;
 
 /// Download manager for handling HTTP downloads
@@ -43,6 +44,8 @@ pub struct DownloadManager {
     resume_detector: ResumeCapabilityDetector,
     /// Partial file manager
     partial_file_manager: PartialFileManager,
+    /// Bandwidth limiter
+    bandwidth_limiter: BandwidthLimiter,
 }
 
 impl DownloadManager {
@@ -55,6 +58,7 @@ impl DownloadManager {
             metadata_repo: MetadataRepository::new(),
             resume_detector: ResumeCapabilityDetector::new(),
             partial_file_manager: PartialFileManager::new(),
+            bandwidth_limiter: BandwidthLimiter::new(),
         }
     }
 
@@ -301,6 +305,7 @@ impl DownloadManager {
         let partial_file_manager = self.partial_file_manager.clone();
         let task_id = task.id.clone();
         let task_for_retry = task.clone();
+        let bandwidth_limiter = self.bandwidth_limiter.clone();
         
         tauri::async_runtime::spawn(async move {
             let result = Self::download_file(
@@ -312,6 +317,7 @@ impl DownloadManager {
                 resume_detector,
                 partial_file_manager,
                 Some(downloaded_bytes),
+                bandwidth_limiter.clone(),
             ).await;
             
             if let Err(e) = result {
@@ -331,7 +337,7 @@ impl DownloadManager {
             active_downloads.write().await.remove(&task_id);
             
             // Try to start next queued download
-            Self::try_start_next(app, active_downloads, scheduler);
+            Self::try_start_next(app, active_downloads, scheduler, bandwidth_limiter);
         });
 
         Ok(())
@@ -383,6 +389,7 @@ impl DownloadManager {
         let partial_file_manager = self.partial_file_manager.clone();
         let task_id = task.id.clone();
         let task_for_retry = task.clone();
+        let bandwidth_limiter = self.bandwidth_limiter.clone();
         
         tauri::async_runtime::spawn(async move {
             let result = Self::download_file(
@@ -394,6 +401,7 @@ impl DownloadManager {
                 resume_detector,
                 partial_file_manager,
                 None,
+                bandwidth_limiter.clone(),
             ).await;
             
             if let Err(e) = result {
@@ -413,7 +421,7 @@ impl DownloadManager {
             active_downloads.write().await.remove(&task_id);
             
             // Try to start next queued download
-            Self::try_start_next(app, active_downloads, scheduler);
+            Self::try_start_next(app, active_downloads, scheduler, bandwidth_limiter);
         });
 
         Ok(())
@@ -424,6 +432,7 @@ impl DownloadManager {
         app: AppHandle,
         active_downloads: Arc<RwLock<HashMap<String, DownloadHandle>>>,
         scheduler: Arc<DownloadScheduler>,
+        bandwidth_limiter: BandwidthLimiter,
     ) {
         tauri::async_runtime::spawn(async move {
             // Get next task from queue
@@ -457,6 +466,7 @@ impl DownloadManager {
                         ResumeCapabilityDetector::new(),
                         PartialFileManager::new(),
                         None,
+                        bandwidth_limiter.clone(),
                     ).await;
                     
                     if let Err(e) = result {
@@ -471,7 +481,7 @@ impl DownloadManager {
                     active_downloads.write().await.remove(&id);
                     
                     // Try next again
-                    Self::try_start_next(app, active_downloads, scheduler);
+                    Self::try_start_next(app, active_downloads, scheduler, bandwidth_limiter);
                 });
             }
         });
@@ -526,9 +536,10 @@ impl DownloadManager {
         cancellation_token: tokio_util::sync::CancellationToken,
         pause_token: tokio_util::sync::CancellationToken,
         metadata_repo: MetadataRepository,
-        resume_detector: ResumeCapabilityDetector,
+        _resume_detector: ResumeCapabilityDetector,
         partial_file_manager: PartialFileManager,
         downloaded_bytes: Option<u64>,
+        bandwidth_limiter: BandwidthLimiter,
     ) -> Result<()> {
         tracing::info!("Starting download: {} -> {}", task.url, task.filename);
 
@@ -605,6 +616,9 @@ impl DownloadManager {
             vec![(0, total_size)]
         };
         
+        // Clone bandwidth limiter for workers
+        let bandwidth_limiter = Arc::new(bandwidth_limiter);
+        
         // Create and spawn workers
         let mut workers = Vec::new();
         let mut chunk_starts = Vec::new();
@@ -616,7 +630,7 @@ impl DownloadManager {
                 end,
                 Arc::new(cancellation_token.clone()),
                 Arc::new(pause_token.clone()),
-            );
+            ).with_bandwidth_limiter(bandwidth_limiter.clone());
             
             let file_clone = file.clone();
             let url = task.url.clone();
@@ -749,6 +763,16 @@ impl DownloadManager {
     /// Get queue length
     pub async fn queue_length(&self) -> usize {
         self.scheduler.len().await
+    }
+
+    /// Set the global bandwidth limit
+    pub async fn set_bandwidth_limit(&self, bytes_per_second: u64) {
+        self.bandwidth_limiter.set_limit(bytes_per_second).await;
+    }
+
+    /// Get the current bandwidth limit
+    pub async fn get_bandwidth_limit(&self) -> u64 {
+        self.bandwidth_limiter.get_limit().await
     }
 }
 
