@@ -2,7 +2,7 @@
 // All Tauri communication happens through this service only
 
 import { invoke } from '@tauri-apps/api/core';
-import { Download, DownloadHistory } from '../types';
+import { Download } from '../types';
 
 export interface StartDownloadParams {
   url: string;
@@ -56,10 +56,7 @@ export const downloadService = {
     return [];
   },
 
-  async getHistory(): Promise<DownloadHistory[]> {
-    // Placeholder - will call Tauri command
-    return [];
-  },
+  // getHistory moved to historyService
 
   async pauseDownload(id: string): Promise<void> {
     // Placeholder - will call Tauri command

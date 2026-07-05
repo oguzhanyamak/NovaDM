@@ -1,9 +1,8 @@
 import { create } from 'zustand';
-import { Download, DownloadHistory } from '../types';
+import { Download } from '../types';
 
 interface DownloadsState {
   downloads: Download[];
-  history: DownloadHistory[];
   currentView: 'downloads' | 'history' | 'settings';
   setCurrentView: (view: 'downloads' | 'history' | 'settings') => void;
   addDownload: (download: Download) => void;
@@ -23,7 +22,6 @@ interface DownloadsState {
 
 export const useDownloadsStore = create<DownloadsState>((set) => ({ 
   downloads: [],
-  history: [],
   currentView: 'downloads',
   setCurrentView: (view) => set({ currentView: view }),
   addDownload: (download) =>

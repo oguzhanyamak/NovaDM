@@ -1,6 +1,8 @@
 // Storage module - Application settings and configuration
-// Simplified to only handle application settings
+// Handles both application settings and download history
 
+pub mod history;
 pub mod settings;
 
+pub use history::{HistoryEntry, HistoryRepository, HistoryStatus};
 pub use settings::SettingsManager;

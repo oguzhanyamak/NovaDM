@@ -13,13 +13,24 @@ export interface Download {
   queuePosition?: number;
 }
 
-export interface DownloadHistory {
+export type HistoryStatus = 'completed' | 'failed' | 'cancelled';
+
+export interface HistoryEntry {
   id: string;
-  name: string;
+  filename: string;
   url: string;
-  status: 'completed' | 'error';
-  size: number;
-  completedAt: Date;
+  output_path: string;
+  status: HistoryStatus;
+  file_size: number;
+  average_speed: number;
+  started_at: number;
+  completed_at: number;
+  duration: number;
+  checksum?: string;
 }
 
 export type ViewType = 'downloads' | 'history' | 'settings';
+
+export type HistoryFilter = 'all' | 'completed' | 'failed' | 'cancelled';
+
+export type HistorySort = 'newest' | 'oldest' | 'largest' | 'smallest' | 'alphabetical';

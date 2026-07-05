@@ -5,6 +5,7 @@ use tauri::{AppHandle, State};
 use crate::core::AppState;
 use crate::download::manager::DownloadManager;
 use crate::download::recovery::{RecoveryCandidate, RecoveryService};
+use crate::services::HistoryService;
 use serde::{Deserialize, Serialize};
 
 /// Progress payload for download progress events
@@ -212,4 +213,36 @@ pub async fn set_bandwidth_limit(
         .set_bandwidth_limit(limit_bytes_per_sec)
         .await;
     Ok(())
+}
+
+// History commands
+
+use crate::storage::HistoryEntry;
+
+/// Get all history entries
+#[tauri::command]
+pub async fn get_history() -> Result<Vec<HistoryEntry>, String> {
+    let service = HistoryService::new();
+    service.load_history().await.map_err(|e| e.to_string())
+}
+
+/// Delete a history entry
+#[tauri::command]
+pub async fn delete_history_entry(id: String) -> Result<(), String> {
+    let service = HistoryService::new();
+    service.delete_entry(&id).await.map_err(|e| e.to_string())
+}
+
+/// Delete multiple history entries
+#[tauri::command]
+pub async fn delete_history_entries(ids: Vec<String>) -> Result<(), String> {
+    let service = HistoryService::new();
+    service.delete_entries(&ids).await.map_err(|e| e.to_string())
+}
+
+/// Clear all history
+#[tauri::command]
+pub async fn clear_history() -> Result<(), String> {
+    let service = HistoryService::new();
+    service.clear_history().await.map_err(|e| e.to_string())
 }
