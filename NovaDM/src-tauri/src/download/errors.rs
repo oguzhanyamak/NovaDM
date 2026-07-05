@@ -49,6 +49,10 @@ pub enum DownloadError {
     /// Network disconnected
     #[error("Network disconnected")]
     NetworkDisconnected,
+
+    /// Invalid state for operation
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
 }
 
 /// Result type alias for download operations

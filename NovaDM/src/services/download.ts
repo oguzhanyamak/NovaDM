@@ -35,6 +35,11 @@ export const downloadService = {
     await invoke('show_in_folder', { path });
   },
 
+  async retryDownload(id: string): Promise<void> {
+    // Only this service calls Tauri commands
+    await invoke('retry_download', { id });
+  },
+
   async getDownloads(): Promise<Download[]> {
     // Placeholder - will call Tauri command
     return [];

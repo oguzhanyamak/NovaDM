@@ -10,7 +10,7 @@ mod download;
 mod storage;
 mod utils;
 
-use api::{ping, get_app_state, start_download, cancel_download, open_file, show_in_folder};
+use api::{ping, get_app_state, start_download, cancel_download, open_file, show_in_folder, retry_download};
 use core::AppState;
 use download::manager::DownloadManager;
 
@@ -30,7 +30,8 @@ pub fn run() {
             start_download,
             cancel_download,
             open_file,
-            show_in_folder
+            show_in_folder,
+            retry_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

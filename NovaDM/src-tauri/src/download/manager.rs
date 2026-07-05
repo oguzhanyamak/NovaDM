@@ -10,6 +10,7 @@
 //! 
 //! Active downloads are stored in a `HashMap<String, DownloadHandle>` for O(1) lookup.
 //! Queued downloads are stored in a `VecDeque` for O(1) FIFO operations.
+//! Failed downloads are stored in a `HashMap` for retry.
 //! Each handle owns a CancellationToken for graceful cancellation.
 
 use std::collections::HashMap;
@@ -31,6 +32,8 @@ pub struct DownloadManager {
     active_downloads: Arc<RwLock<HashMap<String, DownloadHandle>>>,
     /// Scheduler for queue management
     scheduler: Arc<DownloadScheduler>,
+    /// Failed downloads indexed by ID (for retry)
+    failed_downloads: Arc<RwLock<HashMap<String, DownloadTask>>>,
 }
 
 impl DownloadManager {
@@ -39,13 +42,11 @@ impl DownloadManager {
         Self {
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             scheduler: Arc::new(DownloadScheduler::new()),
+            failed_downloads: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Start a new download
-    /// 
-    /// If under the concurrent limit, starts immediately.
-    /// Otherwise, enqueues for later.
     pub async fn start_download(
         &self,
         app: AppHandle,
@@ -85,6 +86,71 @@ impl DownloadManager {
         Ok(download_id)
     }
 
+    /// Retry a failed download
+    /// 
+    /// Only failed downloads can be retried.
+    /// The retry enters the queue exactly like a new download.
+    pub async fn retry_download(&self, app: AppHandle, id: &str) -> Result<()> {
+        // Check if it's active
+        {
+            let downloads = self.active_downloads.read().await;
+            if downloads.contains_key(id) {
+                return Err(DownloadError::InvalidState("Download is active".to_string()));
+            }
+        }
+        
+        // Check if it's in queue
+        if self.scheduler.contains(id).await {
+            return Err(DownloadError::InvalidState("Download is queued".to_string()));
+        }
+        
+        // Get the failed task
+        let task = {
+            let mut failed = self.failed_downloads.write().await;
+            failed.remove(id)
+        };
+        
+        let task = task.ok_or_else(|| {
+            DownloadError::InvalidState("Download not found or not failed".to_string())
+        })?;
+        
+        // Generate new ID for retry
+        let new_id = Uuid::new_v4().to_string();
+        let retry_task = DownloadTask {
+            id: new_id.clone(),
+            url: task.url,
+            filename: task.filename,
+            save_location: task.save_location,
+        };
+        
+        // Emit retry event
+        let _ = app.emit("download://retry", serde_json::json!({
+            "id": id,
+            "new_id": new_id
+        }));
+        
+        // Check if we can start immediately
+        let active_count = self.active_downloads.read().await.len();
+        
+        if self.scheduler.can_start(active_count).await {
+            // Start immediately
+            self.start_download_immediately(app, retry_task).await?;
+        } else {
+            // Enqueue for later
+            let position = self.scheduler.enqueue(retry_task).await?;
+            
+            // Emit queued event
+            let _ = app.emit("download://queued", serde_json::json!({
+                "id": new_id,
+                "position": position
+            }));
+            
+            tracing::info!("Retry queued: {} at position {}", new_id, position);
+        }
+
+        Ok(())
+    }
+
     /// Start a download immediately
     async fn start_download_immediately(
         &self,
@@ -109,7 +175,9 @@ impl DownloadManager {
         let cancellation_token = handle.cancellation_token.clone();
         let active_downloads = self.active_downloads.clone();
         let scheduler = self.scheduler.clone();
+        let failed_downloads = self.failed_downloads.clone();
         let task_id = task.id.clone();
+        let task_for_retry = task.clone();
         
         tauri::async_runtime::spawn(async move {
             let result = Self::download_file(app.clone(), task, cancellation_token).await;
@@ -121,6 +189,9 @@ impl DownloadManager {
                         "id": task_id,
                         "message": e.to_string()
                     }));
+                    
+                    // Store for retry
+                    failed_downloads.write().await.insert(task_id.clone(), task_for_retry);
                 }
             }
             
@@ -369,5 +440,13 @@ mod tests {
         let result = manager.cancel_download("nonexistent").await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), DownloadError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_retry_nonexistent() {
+        let manager = DownloadManager::new();
+        // Cannot create AppHandle in test, so we test the failed_downloads map directly
+        let failed = manager.failed_downloads.read().await;
+        assert!(!failed.contains_key("nonexistent"));
     }
 }

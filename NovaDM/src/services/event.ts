@@ -34,12 +34,18 @@ export interface DownloadStartedData {
   id: string;
 }
 
+export interface DownloadRetryData {
+  id: string;
+  new_id: string;
+}
+
 type ProgressCallback = (data: DownloadProgressData) => void;
 type CompletedCallback = (data: DownloadCompletedData) => void;
 type ErrorCallback = (data: DownloadErrorData) => void;
 type CancelledCallback = (data: DownloadCancelledData) => void;
 type QueuedCallback = (data: DownloadQueuedData) => void;
 type StartedCallback = (data: DownloadStartedData) => void;
+type RetryCallback = (data: DownloadRetryData) => void;
 
 class EventService {
   private progressUnlistenPromise: Promise<UnlistenFn> | null = null;
@@ -48,12 +54,14 @@ class EventService {
   private cancelledUnlistenPromise: Promise<UnlistenFn> | null = null;
   private queuedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private startedUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private retryUnlistenPromise: Promise<UnlistenFn> | null = null;
   private progressCallbacks: Set<ProgressCallback> = new Set();
   private completedCallbacks: Set<CompletedCallback> = new Set();
   private errorCallbacks: Set<ErrorCallback> = new Set();
   private cancelledCallbacks: Set<CancelledCallback> = new Set();
   private queuedCallbacks: Set<QueuedCallback> = new Set();
   private startedCallbacks: Set<StartedCallback> = new Set();
+  private retryCallbacks: Set<RetryCallback> = new Set();
 
   /**
    * Register a listener for download progress events
@@ -63,7 +71,6 @@ class EventService {
   registerProgressListener(callback: ProgressCallback): UnlistenFn {
     this.progressCallbacks.add(callback);
 
-    // Only register with Tauri once
     if (!this.progressUnlistenPromise) {
       this.progressUnlistenPromise = listen<DownloadProgressData>(
         'download://progress',
@@ -73,7 +80,6 @@ class EventService {
       );
     }
 
-    // Return unlisten function for this specific callback
     return () => {
       this.progressCallbacks.delete(callback);
     };
@@ -87,7 +93,6 @@ class EventService {
   registerCompletedListener(callback: CompletedCallback): UnlistenFn {
     this.completedCallbacks.add(callback);
 
-    // Only register with Tauri once
     if (!this.completedUnlistenPromise) {
       this.completedUnlistenPromise = listen<DownloadCompletedData>(
         'download://completed',
@@ -97,7 +102,6 @@ class EventService {
       );
     }
 
-    // Return unlisten function for this specific callback
     return () => {
       this.completedCallbacks.delete(callback);
     };
@@ -111,7 +115,6 @@ class EventService {
   registerErrorListener(callback: ErrorCallback): UnlistenFn {
     this.errorCallbacks.add(callback);
 
-    // Only register with Tauri once
     if (!this.errorUnlistenPromise) {
       this.errorUnlistenPromise = listen<DownloadErrorData>(
         'download://error',
@@ -121,7 +124,6 @@ class EventService {
       );
     }
 
-    // Return unlisten function for this specific callback
     return () => {
       this.errorCallbacks.delete(callback);
     };
@@ -172,6 +174,28 @@ class EventService {
   }
 
   /**
+   * Register a listener for download retry events
+   * @param callback - Function to call when retry event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerRetryListener(callback: RetryCallback): UnlistenFn {
+    this.retryCallbacks.add(callback);
+
+    if (!this.retryUnlistenPromise) {
+      this.retryUnlistenPromise = listen<DownloadRetryData>(
+        'download://retry',
+        (event) => {
+          this.retryCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.retryCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Register a listener for download cancelled events
    * @param callback - Function to call when cancelled event is received
    * @returns Unlisten function to remove the listener
@@ -179,7 +203,6 @@ class EventService {
   registerCancelledListener(callback: CancelledCallback): UnlistenFn {
     this.cancelledCallbacks.add(callback);
 
-    // Only register with Tauri once
     if (!this.cancelledUnlistenPromise) {
       this.cancelledUnlistenPromise = listen<DownloadCancelledData>(
         'download://cancelled',
@@ -189,7 +212,6 @@ class EventService {
       );
     }
 
-    // Return unlisten function for this specific callback
     return () => {
       this.cancelledCallbacks.delete(callback);
     };
@@ -203,6 +225,9 @@ class EventService {
     this.completedCallbacks.clear();
     this.errorCallbacks.clear();
     this.cancelledCallbacks.clear();
+    this.queuedCallbacks.clear();
+    this.startedCallbacks.clear();
+    this.retryCallbacks.clear();
 
     if (this.progressUnlistenPromise) {
       const unlisten = await this.progressUnlistenPromise;
@@ -232,6 +257,12 @@ class EventService {
       const unlisten = await this.startedUnlistenPromise;
       unlisten();
       this.startedUnlistenPromise = null;
+    }
+
+    if (this.retryUnlistenPromise) {
+      const unlisten = await this.retryUnlistenPromise;
+      unlisten();
+      this.retryUnlistenPromise = null;
     }
   }
 }

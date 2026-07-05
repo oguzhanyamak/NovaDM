@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X, RefreshCw } from 'lucide-react';
 import { downloadService } from '../../services/download';
 import { DownloadFileIcon } from './DownloadFileIcon';
 import { DownloadStatusBadge } from './DownloadStatusBadge';
@@ -35,6 +35,14 @@ export function DownloadCard({
     }
   };
 
+  const handleRetry = async () => {
+    try {
+      await downloadService.retryDownload(id);
+    } catch (err) {
+      console.error('Failed to retry download:', err);
+    }
+  };
+
   return (
     <div 
       data-testid={`download-card-${id}`}
@@ -65,13 +73,31 @@ export function DownloadCard({
             <DownloadSpeedLabel speed={speed} />
           )}
           <DownloadStatusBadge status={status} queuePosition={queuePosition} />
-          {(status === 'downloading' || status === 'pending') && (
+          {status === 'downloading' && (
             <button
               onClick={handleCancel}
               className="p-1 rounded hover:bg-accent hover:text-accent-foreground"
               title="Cancel download"
             >
               <X className="w-4 h-4" />
+            </button>
+          )}
+          {status === 'pending' && (
+            <button
+              onClick={handleCancel}
+              className="p-1 rounded hover:bg-accent hover:text-accent-foreground"
+              title="Cancel download"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          {status === 'error' && (
+            <button
+              onClick={handleRetry}
+              className="p-1 rounded hover:bg-accent hover:text-accent-foreground"
+              title="Retry download"
+            >
+              <RefreshCw className="w-4 h-4" />
             </button>
           )}
         </div>

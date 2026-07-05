@@ -126,6 +126,12 @@ impl DownloadScheduler {
         active_count < self.max_concurrent
     }
 
+    /// Check if a task is in the queue
+    pub async fn contains(&self, id: &str) -> bool {
+        let queue = self.queue.read().await;
+        queue.contains(&id.to_string())
+    }
+
     /// Get next task from queue (without removing)
     pub async fn peek_next(&self) -> Option<(String, DownloadTask)> {
         let queue = self.queue.read().await;

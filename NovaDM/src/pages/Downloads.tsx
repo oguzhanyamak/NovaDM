@@ -6,7 +6,7 @@ import { DownloadCard } from '../components/download/DownloadCard';
 import { NewDownloadDialog } from '../components/NewDownloadDialog';
 import { useDownloadsStore } from '../store/downloads';
 import { eventService } from '../services/event';
-import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData, DownloadQueuedData, DownloadStartedData } from '../services/event';
+import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData, DownloadQueuedData, DownloadStartedData, DownloadRetryData } from '../services/event';
 
 export function Downloads() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -17,6 +17,7 @@ export function Downloads() {
   const markAsCancelled = useDownloadsStore((state) => state.markAsCancelled);
   const queueDownload = useDownloadsStore((state) => state.queueDownload);
   const startQueuedDownload = useDownloadsStore((state) => state.startQueuedDownload);
+  const retryDownload = useDownloadsStore((state) => state.retryDownload);
 
   // Register event listeners
   useEffect(() => {
@@ -61,6 +62,14 @@ export function Downloads() {
       }
     );
 
+    const unlistenRetry = eventService.registerRetryListener(
+      (data: DownloadRetryData) => {
+        // The retry creates a new download with a new ID
+        // We need to handle the state transition
+        retryDownload(data.id);
+      }
+    );
+
     return () => {
       unlistenProgress();
       unlistenCompleted();
@@ -68,8 +77,9 @@ export function Downloads() {
       unlistenCancelled();
       unlistenQueued();
       unlistenStarted();
+      unlistenRetry();
     };
-  }, [updateDownloadProgress, completeDownload, updateDownload, markAsCancelled, queueDownload, startQueuedDownload]);
+  }, [updateDownloadProgress, completeDownload, updateDownload, markAsCancelled, queueDownload, startQueuedDownload, retryDownload]);
 
   const handleOpenDialog = () => {
     setIsDialogOpen(true);

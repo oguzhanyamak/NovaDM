@@ -142,3 +142,20 @@ pub async fn show_in_folder(path: String) -> Result<(), String> {
     
     Ok(())
 }
+
+#[tauri::command]
+pub async fn retry_download(
+    app_handle: AppHandle,
+    download_manager: State<'_, DownloadManager>,
+    id: String,
+) -> Result<String, String> {
+    tracing::info!("Retrying download: {}", id);
+
+    download_manager
+        .retry_download(app_handle, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!("Download retry initiated: {}", id);
+    Ok(id)
+}
