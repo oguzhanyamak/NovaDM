@@ -25,6 +25,10 @@ export interface DownloadCancelledData {
   id: string;
 }
 
+export interface DownloadPausedData {
+  id: string;
+}
+
 export interface DownloadQueuedData {
   id: string;
   position: number;
@@ -43,6 +47,7 @@ type ProgressCallback = (data: DownloadProgressData) => void;
 type CompletedCallback = (data: DownloadCompletedData) => void;
 type ErrorCallback = (data: DownloadErrorData) => void;
 type CancelledCallback = (data: DownloadCancelledData) => void;
+type PausedCallback = (data: DownloadPausedData) => void;
 type QueuedCallback = (data: DownloadQueuedData) => void;
 type StartedCallback = (data: DownloadStartedData) => void;
 type RetryCallback = (data: DownloadRetryData) => void;
@@ -52,6 +57,7 @@ class EventService {
   private completedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private errorUnlistenPromise: Promise<UnlistenFn> | null = null;
   private cancelledUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private pausedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private queuedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private startedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private retryUnlistenPromise: Promise<UnlistenFn> | null = null;
@@ -59,6 +65,7 @@ class EventService {
   private completedCallbacks: Set<CompletedCallback> = new Set();
   private errorCallbacks: Set<ErrorCallback> = new Set();
   private cancelledCallbacks: Set<CancelledCallback> = new Set();
+  private pausedCallbacks: Set<PausedCallback> = new Set();
   private queuedCallbacks: Set<QueuedCallback> = new Set();
   private startedCallbacks: Set<StartedCallback> = new Set();
   private retryCallbacks: Set<RetryCallback> = new Set();
@@ -218,6 +225,28 @@ class EventService {
   }
 
   /**
+   * Register a listener for download paused events
+   * @param callback - Function to call when paused event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerPausedListener(callback: PausedCallback): UnlistenFn {
+    this.pausedCallbacks.add(callback);
+
+    if (!this.pausedUnlistenPromise) {
+      this.pausedUnlistenPromise = listen<DownloadPausedData>(
+        'download://paused',
+        (event) => {
+          this.pausedCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.pausedCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Unregister all listeners
    */
   async unregisterAll(): Promise<void> {
@@ -225,6 +254,7 @@ class EventService {
     this.completedCallbacks.clear();
     this.errorCallbacks.clear();
     this.cancelledCallbacks.clear();
+    this.pausedCallbacks.clear();
     this.queuedCallbacks.clear();
     this.startedCallbacks.clear();
     this.retryCallbacks.clear();
@@ -263,6 +293,12 @@ class EventService {
       const unlisten = await this.retryUnlistenPromise;
       unlisten();
       this.retryUnlistenPromise = null;
+    }
+
+    if (this.pausedUnlistenPromise) {
+      const unlisten = await this.pausedUnlistenPromise;
+      unlisten();
+      this.pausedUnlistenPromise = null;
     }
   }
 }

@@ -16,6 +16,7 @@ interface DownloadsState {
   startQueuedDownload: (id: string) => void;
   updateQueuePosition: (id: string, position: number) => void;
   retryDownload: (id: string) => void;
+  markAsPaused: (id: string) => void;
 }
 
 export const useDownloadsStore = create<DownloadsState>((set) => ({ 
@@ -118,6 +119,19 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
               status: 'pending' as const,
               progress: 0,
               error: undefined,
+            }
+          : d
+      ),
+    })),
+
+  markAsPaused: (id) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'paused' as const,
+              speed: 0,
             }
           : d
       ),

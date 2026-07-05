@@ -16,7 +16,9 @@ use tokio_util::sync::CancellationToken;
 /// 
 /// Each handle contains:
 /// - `id`: Unique identifier for the download
+/// - `output_path`: Path to the output file
 /// - `cancellation_token`: Token used to signal cancellation to the download worker
+/// - `pause_token`: Token used to signal pause to the download worker
 /// 
 /// # Cancellation Flow
 /// 
@@ -26,20 +28,31 @@ use tokio_util::sync::CancellationToken;
 /// 4. Calls `token.cancel()` on the CancellationToken
 /// 5. Download loop checks `token.is_cancelled()` and exits gracefully
 /// 6. Partial file is deleted
+/// 
+/// # Pause Flow
+/// 
+/// 1. User clicks Pause button
+/// 2. Frontend sends pause_download command
+/// 3. Backend finds handle by ID
+/// 4. Calls `token.cancel()` on the pause token
+/// 5. Download loop checks `token.is_cancelled()` and exits gracefully
+/// 6. Partial file and metadata are preserved
 #[derive(Debug, Clone)]
 pub struct DownloadHandle {
     pub id: String,
     pub output_path: Option<String>,
     pub cancellation_token: CancellationToken,
+    pub pause_token: CancellationToken,
 }
 
 impl DownloadHandle {
-    /// Create a new download handle with a cancellation token
+    /// Create a new download handle with cancellation and pause tokens
     pub fn new(id: String) -> Self {
         Self {
             id,
             output_path: None,
             cancellation_token: CancellationToken::new(),
+            pause_token: CancellationToken::new(),
         }
     }
 

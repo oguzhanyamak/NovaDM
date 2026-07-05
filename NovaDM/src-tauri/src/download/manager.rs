@@ -163,6 +163,32 @@ impl DownloadManager {
         Ok(())
     }
 
+    /// Pause an active download
+    /// 
+    /// Paused downloads keep their .part file and metadata.
+    /// The scheduler will start the next queued download.
+    pub async fn pause_download(&self, id: &str) -> Result<()> {
+        let mut downloads = self.active_downloads.write().await;
+        
+        if let Some(handle) = downloads.get(id) {
+            // Check if already paused (pause_token is already cancelled)
+            if handle.pause_token.is_cancelled() {
+                return Err(DownloadError::InvalidState("Download is already paused".to_string()));
+            }
+            
+            // Signal pause
+            handle.pause_token.cancel();
+            tracing::info!("Download paused: {}", id);
+            
+            // Remove from active downloads (so scheduler can start next)
+            downloads.remove(id);
+            
+            return Ok(());
+        }
+        
+        Err(DownloadError::NotFound(id.to_string()))
+    }
+
     /// Start a download immediately
     async fn start_download_immediately(
         &self,
@@ -172,7 +198,7 @@ impl DownloadManager {
         let output_path = PathBuf::from(&task.save_location).join(&task.filename);
         let part_path = self.partial_file_manager.part_path(&output_path);
         
-        // Create download handle with cancellation token
+        // Create download handle with cancellation and pause tokens
         let mut handle = DownloadHandle::new(task.id.clone());
         handle.set_output_path(output_path.to_string_lossy().to_string());
 
@@ -200,6 +226,7 @@ impl DownloadManager {
 
         // Clone for worker
         let cancellation_token = handle.cancellation_token.clone();
+        let pause_token = handle.pause_token.clone();
         let active_downloads = self.active_downloads.clone();
         let scheduler = self.scheduler.clone();
         let failed_downloads = self.failed_downloads.clone();
@@ -214,13 +241,14 @@ impl DownloadManager {
                 app.clone(),
                 task,
                 cancellation_token,
+                pause_token,
                 metadata_repo,
                 resume_detector,
                 partial_file_manager,
             ).await;
             
             if let Err(e) = result {
-                if !matches!(&e, DownloadError::Cancelled) {
+                if !matches!(&e, DownloadError::Cancelled) && !matches!(&e, DownloadError::Paused) {
                     tracing::error!("Download {} failed: {}", task_id, e);
                     let _ = app.emit("download://error", serde_json::json!({
                         "id": task_id,
@@ -232,7 +260,7 @@ impl DownloadManager {
                 }
             }
             
-            // Remove from active downloads
+            // Remove from active downloads if still there
             active_downloads.write().await.remove(&task_id);
             
             // Try to start next queued download
@@ -252,7 +280,6 @@ impl DownloadManager {
             // Get next task from queue
             if let Some((id, task)) = scheduler.pop_next().await {
                 let output_path = PathBuf::from(&task.save_location).join(&task.filename);
-                let _part_path = PartialFileManager::new().part_path(&output_path);
                 
                 // Create handle
                 let mut handle = DownloadHandle::new(id.clone());
@@ -266,8 +293,9 @@ impl DownloadManager {
                     "id": id
                 }));
                 
-                // Clone token
+                // Clone tokens
                 let cancellation_token = handle.cancellation_token.clone();
+                let pause_token = handle.pause_token.clone();
                 
                 // Spawn worker
                 tauri::async_runtime::spawn(async move {
@@ -275,13 +303,14 @@ impl DownloadManager {
                         app.clone(),
                         task,
                         cancellation_token,
+                        pause_token,
                         MetadataRepository::new(),
                         ResumeCapabilityDetector::new(),
                         PartialFileManager::new(),
                     ).await;
                     
                     if let Err(e) = result {
-                        if !matches!(&e, DownloadError::Cancelled) {
+                        if !matches!(&e, DownloadError::Cancelled) && !matches!(&e, DownloadError::Paused) {
                             let _ = app.emit("download://error", serde_json::json!({
                                 "id": id,
                                 "message": e.to_string()
@@ -339,6 +368,7 @@ impl DownloadManager {
         app: AppHandle,
         task: DownloadTask,
         cancellation_token: tokio_util::sync::CancellationToken,
+        pause_token: tokio_util::sync::CancellationToken,
         metadata_repo: MetadataRepository,
         resume_detector: ResumeCapabilityDetector,
         partial_file_manager: PartialFileManager,
@@ -396,6 +426,25 @@ impl DownloadManager {
                 return Err(DownloadError::Cancelled);
             }
 
+            // Check for pause
+            if pause_token.is_cancelled() {
+                // Flush and sync before exiting
+                let _ = writer.flush().await;
+                
+                // Update final progress in metadata
+                metadata.update_progress(downloaded, content_length);
+                if let Err(e) = metadata_repo.update(&metadata).await {
+                    tracing::warn!("Failed to update metadata on pause: {}", e);
+                }
+                
+                let _ = app.emit("download://paused", serde_json::json!({
+                    "id": task.id
+                }));
+                tracing::info!("Download paused: {}", task.filename);
+                
+                return Err(DownloadError::Paused);
+            }
+
             let chunk = chunk_result
                 .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
 
@@ -427,6 +476,24 @@ impl DownloadManager {
             }
             
             return Err(DownloadError::Cancelled);
+        }
+
+        if pause_token.is_cancelled() {
+            // Flush and sync before exiting
+            let _ = writer.flush().await;
+            
+            // Update final progress in metadata
+            metadata.update_progress(downloaded, content_length);
+            if let Err(e) = metadata_repo.update(&metadata).await {
+                tracing::warn!("Failed to update metadata on pause: {}", e);
+            }
+            
+            let _ = app.emit("download://paused", serde_json::json!({
+                "id": task.id
+            }));
+            tracing::info!("Download paused: {}", task.filename);
+            
+            return Err(DownloadError::Paused);
         }
 
         writer.flush().await
@@ -567,5 +634,13 @@ mod tests {
         // Cannot create AppHandle in test, so we test the failed_downloads map directly
         let failed = manager.failed_downloads.read().await;
         assert!(!failed.contains_key("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn test_pause_nonexistent() {
+        let manager = DownloadManager::new();
+        let result = manager.pause_download("nonexistent").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DownloadError::NotFound(_)));
     }
 }

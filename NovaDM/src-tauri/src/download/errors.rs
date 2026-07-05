@@ -34,6 +34,10 @@ pub enum DownloadError {
     #[error("Download cancelled")]
     Cancelled,
 
+    /// Download was paused by user
+    #[error("Download paused")]
+    Paused,
+
     /// Permission denied
     #[error("Permission denied")]
     PermissionDenied,
