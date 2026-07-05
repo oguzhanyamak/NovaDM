@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { cn } from '../lib/utils';
 import { Download as DownloadIcon, FolderOpen } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { downloadService } from '../services/download';
 import { useDownloadsStore } from '../store/downloads';
 import type { Download } from '../types';
@@ -141,6 +142,17 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
     onOpenChange(false);
   };
 
+  const handleBrowseFolder = async () => {
+    try {
+      const selected = await invoke<string | null>('select_folder');
+      if (selected) {
+        setSaveLocation(selected);
+      }
+    } catch (err) {
+      console.error('Failed to select folder:', err);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       onOpenChange(false);
@@ -212,7 +224,7 @@ export function NewDownloadDialog({ open, onOpenChange }: NewDownloadDialogProps
                 />
                 <button
                   type="button"
-                  onClick={() => alert('Folder picker not implemented yet')}
+                  onClick={handleBrowseFolder}
                   className="h-10 w-10 shrink-0 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex items-center justify-center"
                 >
                   <FolderOpen className="h-4 w-4" />

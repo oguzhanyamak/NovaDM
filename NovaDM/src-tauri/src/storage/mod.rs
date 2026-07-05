@@ -5,4 +5,4 @@ pub mod history;
 pub mod settings;
 
 pub use history::{HistoryEntry, HistoryRepository, HistoryStatus};
-pub use settings::SettingsManager;
+pub use settings::{AppSettings, SettingsRepository, Theme};

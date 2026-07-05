@@ -246,3 +246,103 @@ pub async fn clear_history() -> Result<(), String> {
     let service = HistoryService::new();
     service.clear_history().await.map_err(|e| e.to_string())
 }
+
+// Settings commands
+
+use crate::storage::AppSettings;
+use crate::services::SettingsService;
+
+/// Get all settings
+#[tauri::command]
+pub async fn get_settings() -> Result<AppSettings, String> {
+    let service = SettingsService::new();
+    service.load().await
+}
+
+/// Save settings
+#[tauri::command]
+pub async fn save_settings(settings: AppSettings) -> Result<(), String> {
+    let service = SettingsService::new();
+    service.save(&settings).await
+}
+
+/// Update a single setting
+#[tauri::command]
+pub async fn update_setting(key: String, value: serde_json::Value) -> Result<AppSettings, String> {
+    let service = SettingsService::new();
+    let mut settings = service.load().await?;
+    
+    match key.as_str() {
+        "download_path" => {
+            settings.download_path = value.as_str().unwrap_or_default().to_string();
+        }
+        "max_concurrent_downloads" => {
+            settings.max_concurrent_downloads = value.as_u64().unwrap_or(3) as usize;
+        }
+        "bandwidth_limit_kb" => {
+            settings.bandwidth_limit_kb = value.as_u64().unwrap_or(0);
+        }
+        "auto_resume" => {
+            settings.auto_resume = value.as_bool().unwrap_or(true);
+        }
+        "auto_retry" => {
+            settings.auto_retry = value.as_bool().unwrap_or(true);
+        }
+        "max_retry_attempts" => {
+            settings.max_retry_attempts = value.as_u64().unwrap_or(3) as u32;
+        }
+        "theme" => {
+            settings.theme = match value.as_str().unwrap_or("system") {
+                "dark" => crate::storage::Theme::Dark,
+                "light" => crate::storage::Theme::Light,
+                _ => crate::storage::Theme::System,
+            };
+        }
+        "open_on_startup" => {
+            settings.open_on_startup = value.as_bool().unwrap_or(false);
+        }
+        "auto_check_updates" => {
+            settings.auto_check_updates = value.as_bool().unwrap_or(true);
+        }
+        "enable_notifications" => {
+            settings.enable_notifications = value.as_bool().unwrap_or(true);
+        }
+        "enable_browser_integration" => {
+            settings.enable_browser_integration = value.as_bool().unwrap_or(false);
+        }
+        _ => return Err(format!("Unknown setting key: {}", key)),
+    }
+    
+    service.save(&settings).await?;
+    Ok(settings)
+}
+
+/// Export settings to JSON
+#[tauri::command]
+pub async fn export_settings() -> Result<String, String> {
+    let service = SettingsService::new();
+    service.export().await
+}
+
+/// Import settings from JSON
+#[tauri::command]
+pub async fn import_settings(json: String) -> Result<AppSettings, String> {
+    let service = SettingsService::new();
+    service.import(&json).await
+}
+
+/// Reset settings to defaults
+#[tauri::command]
+pub async fn reset_settings() -> Result<AppSettings, String> {
+    let service = SettingsService::new();
+    service.reset().await
+}
+
+/// Select a folder via native file dialog
+#[tauri::command]
+pub async fn select_folder() -> Result<Option<String>, String> {
+    let folder = rfd::AsyncFileDialog::new()
+        .pick_folder()
+        .await;
+    Ok(folder.map(|f| f.path().to_string_lossy().to_string()))
+}

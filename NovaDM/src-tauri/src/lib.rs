@@ -11,7 +11,13 @@ mod services;
 mod storage;
 mod utils;
 
-use api::{get_app_state, get_recovery_candidates, pause_download, ping, resume_download, start_download, cancel_download, open_file, show_in_folder, retry_download, set_bandwidth_limit, get_history, delete_history_entry, delete_history_entries, clear_history};
+use api::{
+    get_app_state, get_recovery_candidates, pause_download, ping, resume_download, start_download,
+    cancel_download, open_file, show_in_folder, retry_download, set_bandwidth_limit, get_history,
+    delete_history_entry, delete_history_entries, clear_history,
+    get_settings, save_settings, update_setting, export_settings, import_settings, reset_settings,
+    select_folder
+};
 use core::AppState;
 use download::manager::DownloadManager;
 
@@ -40,7 +46,14 @@ pub fn run() {
             get_history,
             delete_history_entry,
             delete_history_entries,
-            clear_history
+            clear_history,
+            get_settings,
+            save_settings,
+            update_setting,
+            export_settings,
+            import_settings,
+            reset_settings,
+            select_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
