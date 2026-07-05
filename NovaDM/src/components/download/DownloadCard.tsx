@@ -10,7 +10,7 @@ interface DownloadCardProps {
   id: string;
   name: string;
   url: string;
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  status: 'pending' | 'downloading' | 'paused' | 'recovered' | 'completed' | 'error' | 'cancelled';
   progress: number;
   speed: number;
   queuePosition?: number;

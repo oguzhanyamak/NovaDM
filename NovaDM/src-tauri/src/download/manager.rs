@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -189,6 +189,154 @@ impl DownloadManager {
         Err(DownloadError::NotFound(id.to_string()))
     }
 
+    /// Resume a paused download
+    /// 
+    /// Validates the partial file and remote file before resuming.
+    /// Uses HTTP Range requests to continue from where it left off.
+    pub async fn resume_download(&self, app: AppHandle, id: &str) -> Result<()> {
+        // Load metadata
+        let metadata = self.metadata_repo.load(id).await
+            .map_err(|e| DownloadError::IoError(e.to_string()))?
+            .ok_or_else(|| DownloadError::NotFound(id.to_string()))?;
+        
+        // Validate resume is supported
+        if !metadata.resume_supported {
+            return Err(DownloadError::ResumeUnsupported);
+        }
+        
+        // Validate partial file exists
+        let part_path = metadata.partial_path.as_ref()
+            .ok_or_else(|| DownloadError::InvalidState("No partial file path".to_string()))?;
+        
+        if !part_path.exists() {
+            return Err(DownloadError::InvalidState("Partial file not found".to_string()));
+        }
+        
+        // Validate remote file hasn't changed
+        let response = reqwest::Client::new()
+            .head(&metadata.url)
+            .send()
+            .await
+            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+        
+        // Check ETag
+        if let Some(etag) = &metadata.etag {
+            if let Some(server_etag) = response.headers().get(reqwest::header::ETAG) {
+                if server_etag.to_str().ok() != Some(etag.as_str()) {
+                    return Err(DownloadError::FileChanged);
+                }
+            }
+        }
+        
+        // Check Last-Modified
+        if let Some(last_modified) = &metadata.last_modified {
+            if let Some(server_last_modified) = response.headers().get(reqwest::header::LAST_MODIFIED) {
+                if server_last_modified.to_str().ok() != Some(last_modified.as_str()) {
+                    return Err(DownloadError::FileChanged);
+                }
+            }
+        }
+        
+        // Create task for resume
+        let task = DownloadTask {
+            id: id.to_string(),
+            url: metadata.url.clone(),
+            filename: metadata.filename.clone(),
+            save_location: metadata.output_path.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        };
+        
+        // Check if we can start immediately
+        let active_count = self.active_downloads.read().await.len();
+        
+        if self.scheduler.can_start(active_count).await {
+            // Start immediately with resume
+            self.start_download_immediately_for_resume(app, task, metadata.downloaded_bytes).await?;
+        } else {
+            // Enqueue for later
+            let position = self.scheduler.enqueue(task).await?;
+            
+            // Emit queued event
+            let _ = app.emit("download://queued", serde_json::json!({
+                "id": id,
+                "position": position
+            }));
+            
+            tracing::info!("Resume queued: {} at position {}", id, position);
+        }
+
+        Ok(())
+    }
+    
+    /// Start a download immediately for resume
+    async fn start_download_immediately_for_resume(
+        &self,
+        app: AppHandle,
+        task: DownloadTask,
+        downloaded_bytes: u64,
+    ) -> Result<()> {
+        let output_path = PathBuf::from(&task.save_location).join(&task.filename);
+        
+        // Create download handle with cancellation and pause tokens
+        let mut handle = DownloadHandle::new(task.id.clone());
+        handle.set_output_path(output_path.to_string_lossy().to_string());
+
+        // Add to active downloads
+        self.active_downloads.write().await.insert(task.id.clone(), handle.clone());
+
+        // Emit resumed event
+        let _ = app.emit("download://resumed", serde_json::json!({
+            "id": task.id
+        }));
+
+        // Clone for worker
+        let cancellation_token = handle.cancellation_token.clone();
+        let pause_token = handle.pause_token.clone();
+        let active_downloads = self.active_downloads.clone();
+        let scheduler = self.scheduler.clone();
+        let failed_downloads = self.failed_downloads.clone();
+        let metadata_repo = self.metadata_repo.clone();
+        let resume_detector = self.resume_detector.clone();
+        let partial_file_manager = self.partial_file_manager.clone();
+        let task_id = task.id.clone();
+        let task_for_retry = task.clone();
+        
+        tauri::async_runtime::spawn(async move {
+            let result = Self::download_file(
+                app.clone(),
+                task,
+                cancellation_token,
+                pause_token,
+                metadata_repo,
+                resume_detector,
+                partial_file_manager,
+                Some(downloaded_bytes),
+            ).await;
+            
+            if let Err(e) = result {
+                if !matches!(&e, DownloadError::Cancelled) && !matches!(&e, DownloadError::Paused) {
+                    tracing::error!("Download {} failed: {}", task_id, e);
+                    let _ = app.emit("download://error", serde_json::json!({
+                        "id": task_id,
+                        "message": e.to_string()
+                    }));
+                    
+                    // Store for retry
+                    failed_downloads.write().await.insert(task_id.clone(), task_for_retry);
+                }
+            }
+            
+            // Remove from active downloads if still there
+            active_downloads.write().await.remove(&task_id);
+            
+            // Try to start next queued download
+            Self::try_start_next(app, active_downloads, scheduler);
+        });
+
+        Ok(())
+    }
+
     /// Start a download immediately
     async fn start_download_immediately(
         &self,
@@ -245,6 +393,7 @@ impl DownloadManager {
                 metadata_repo,
                 resume_detector,
                 partial_file_manager,
+                None,
             ).await;
             
             if let Err(e) = result {
@@ -307,6 +456,7 @@ impl DownloadManager {
                         MetadataRepository::new(),
                         ResumeCapabilityDetector::new(),
                         PartialFileManager::new(),
+                        None,
                     ).await;
                     
                     if let Err(e) = result {
@@ -363,7 +513,13 @@ impl DownloadManager {
         Err(DownloadError::NotFound(id.to_string()))
     }
 
+    /// Default number of connections for multi-part download
+    const DEFAULT_CONNECTIONS: usize = 8;
+
     /// Download a file with streaming and buffered writing
+    /// 
+    /// If `downloaded_bytes` is provided, resumes from that position.
+    /// If server supports Accept-Ranges, uses multi-part downloading.
     async fn download_file(
         app: AppHandle,
         task: DownloadTask,
@@ -372,19 +528,61 @@ impl DownloadManager {
         metadata_repo: MetadataRepository,
         resume_detector: ResumeCapabilityDetector,
         partial_file_manager: PartialFileManager,
+        downloaded_bytes: Option<u64>,
     ) -> Result<()> {
         tracing::info!("Starting download: {} -> {}", task.url, task.filename);
 
         let output_path = Self::build_output_path(&task).await?;
         let part_path = partial_file_manager.part_path(&output_path);
-        let response = Self::send_request(&task.url).await?;
-        let content_length = response.content_length();
-        let mut downloaded: u64 = 0;
         
-        // Detect resume capability
-        let capability = resume_detector.detect(&response);
+        // Check if this is a resume
+        let is_resume = downloaded_bytes.is_some();
+        let start_pos = downloaded_bytes.unwrap_or(0);
         
-        // Create metadata with resume capability and partial path
+        // Send request to get headers
+        let head_response = reqwest::Client::new()
+            .head(&task.url)
+            .send()
+            .await
+            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+        
+        // Check if server supports ranges
+        let supports_ranges = head_response
+            .headers()
+            .get(reqwest::header::ACCEPT_RANGES)
+            .map(|v| v == "bytes")
+            .unwrap_or(false);
+        
+        // Get total size
+        let total_size = head_response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        
+        // If resume and server doesn't support ranges, fallback to single connection
+        if is_resume && !supports_ranges {
+            return Err(DownloadError::ResumeUnsupported);
+        }
+        
+        // Create .part file
+        let file = if is_resume {
+            tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&part_path)
+                .await
+                .map_err(|e| DownloadError::IoError(e.to_string()))?
+        } else {
+            tokio::fs::File::create(&part_path)
+                .await
+                .map_err(|e| DownloadError::IoError(e.to_string()))?
+        };
+        
+        // Wrap in Arc<RwLock> for multi-part access
+        let file = Arc::new(RwLock::new(file));
+        
+        // Create metadata
         let mut metadata = DownloadMetadata::new(
             task.id.clone(),
             task.url.clone(),
@@ -392,137 +590,130 @@ impl DownloadManager {
             output_path.clone(),
         );
         metadata.set_partial_path(part_path.clone());
-        metadata.set_resume_capability(capability.resume_supported);
+        metadata.set_resume_capability(supports_ranges);
         
-        // Save initial metadata with capability
+        // Save initial metadata
         if let Err(e) = metadata_repo.save(&metadata).await {
             tracing::warn!("Failed to save metadata: {}", e);
         }
-
-        // Create .part file with buffered writer for performance
-        let file = tokio::fs::File::create(&part_path).await
-            .map_err(|e| DownloadError::IoError(e.to_string()))?;
-        let mut writer = BufWriter::new(file);
-
-        // Stream response body
-        let mut stream = response.bytes_stream();
-        use futures_util::StreamExt;
-
-        while let Some(chunk_result) = stream.next().await {
-            // Check for cancellation
-            if cancellation_token.is_cancelled() {
-                drop(writer);
-                let _ = tokio::fs::remove_file(&part_path).await;
-                let _ = app.emit("download://cancelled", serde_json::json!({
-                    "id": task.id
-                }));
-                tracing::info!("Download cancelled: {}", task.filename);
-                
-                // Delete metadata on cancellation
-                if let Err(e) = metadata_repo.delete(&task.id).await {
-                    tracing::warn!("Failed to delete metadata: {}", e);
-                }
-                
-                return Err(DownloadError::Cancelled);
-            }
-
-            // Check for pause
-            if pause_token.is_cancelled() {
-                // Flush and sync before exiting
-                let _ = writer.flush().await;
-                
-                // Update final progress in metadata
-                metadata.update_progress(downloaded, content_length);
-                if let Err(e) = metadata_repo.update(&metadata).await {
-                    tracing::warn!("Failed to update metadata on pause: {}", e);
-                }
-                
-                let _ = app.emit("download://paused", serde_json::json!({
-                    "id": task.id
-                }));
-                tracing::info!("Download paused: {}", task.filename);
-                
-                return Err(DownloadError::Paused);
-            }
-
-            let chunk = chunk_result
-                .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
-
-            writer.write_all(&chunk).await
-                .map_err(|e| DownloadError::IoError(e.to_string()))?;
-
-            downloaded += chunk.len() as u64;
-            
-            // Update metadata periodically (every 1MB or so)
-            if downloaded % (1024 * 1024) == 0 || downloaded == content_length.unwrap_or(0) {
-                metadata.update_progress(downloaded, content_length);
-                if let Err(e) = metadata_repo.update(&metadata).await {
-                    tracing::warn!("Failed to update metadata: {}", e);
-                }
-            }
-            
-            Self::emit_progress(&app, &task.id, downloaded, content_length)?;
-        }
-
-        if cancellation_token.is_cancelled() {
-            drop(writer);
-            let _ = tokio::fs::remove_file(&part_path).await;
-            let _ = app.emit("download://cancelled", serde_json::json!({
-                "id": task.id
-            }));
-            
-            if let Err(e) = metadata_repo.delete(&task.id).await {
-                tracing::warn!("Failed to delete metadata: {}", e);
-            }
-            
-            return Err(DownloadError::Cancelled);
-        }
-
-        if pause_token.is_cancelled() {
-            // Flush and sync before exiting
-            let _ = writer.flush().await;
-            
-            // Update final progress in metadata
-            metadata.update_progress(downloaded, content_length);
-            if let Err(e) = metadata_repo.update(&metadata).await {
-                tracing::warn!("Failed to update metadata on pause: {}", e);
-            }
-            
-            let _ = app.emit("download://paused", serde_json::json!({
-                "id": task.id
-            }));
-            tracing::info!("Download paused: {}", task.filename);
-            
-            return Err(DownloadError::Paused);
-        }
-
-        writer.flush().await
-            .map_err(|e| DownloadError::IoError(e.to_string()))?;
         
-        // Atomically rename .part to final file
+        // Calculate chunks
+        let chunks = if supports_ranges && total_size > 0 {
+            Self::calculate_chunks(total_size, Self::DEFAULT_CONNECTIONS)
+        } else {
+            // Single connection fallback
+            vec![(0, total_size)]
+        };
+        
+        // Create and spawn workers
+        let mut workers = Vec::new();
+        let mut chunk_starts = Vec::new();
+        
+        for (i, (start, end)) in chunks.into_iter().enumerate() {
+            let chunk = crate::download::chunk::DownloadChunk::new(
+                format!("{}-{}", task.id, i),
+                start,
+                end,
+                Arc::new(cancellation_token.clone()),
+                Arc::new(pause_token.clone()),
+            );
+            
+            let file_clone = file.clone();
+            let url = task.url.clone();
+            let task_id = task.id.clone();
+            let app_clone = app.clone();
+            let total = total_size;
+            let chunk_start = start;
+            
+            let handle = tauri::async_runtime::spawn(async move {
+                let mut chunk = chunk;
+                let result = chunk.download(&url, file_clone).await;
+                
+                // Emit progress for this chunk
+                if result.is_ok() || matches!(result, Err(DownloadError::Cancelled) | Err(DownloadError::Paused)) {
+                    let _ = app_clone.emit("download://progress", serde_json::json!({
+                        "id": task_id,
+                        "progress": None::<u32>,
+                        "downloaded_bytes": chunk_start + chunk.downloaded,
+                        "total_bytes": Some(total),
+                        "speed": 0,
+                        "status": "downloading"
+                    }));
+                }
+                
+                result
+            });
+            
+            workers.push(handle);
+            chunk_starts.push(start);
+        }
+        
+        // Wait for all workers
+        let num_chunks = chunk_starts.len();
+        let mut total_downloaded = start_pos;
+        for (i, worker) in workers.into_iter().enumerate() {
+            if let Err(e) = worker.await.unwrap_or(Ok(())) {
+                if !matches!(&e, DownloadError::Cancelled) && !matches!(&e, DownloadError::Paused) {
+                    // One worker failed - download fails
+                    let _ = app.emit("download://error", serde_json::json!({
+                        "id": task.id,
+                        "message": e.to_string()
+                    }));
+                    
+                    // Update metadata with partial progress
+                    metadata.update_progress(total_downloaded, Some(total_size));
+                    if let Err(e) = metadata_repo.update(&metadata).await {
+                        tracing::warn!("Failed to update metadata: {}", e);
+                    }
+                    
+                    return Err(e);
+                }
+            }
+            total_downloaded = chunk_starts[i] + (total_size / num_chunks as u64);
+        }
+        
+        // Finalize
         if let Err(e) = partial_file_manager.finalize(&part_path).await {
             tracing::error!("Failed to finalize download: {}", e);
             let _ = app.emit("download://error", serde_json::json!({
                 "id": task.id,
                 "message": e.to_string()
             }));
-            
-            // Keep .part file for potential future resume
             return Err(DownloadError::IoError(e.to_string()));
         }
-
-        tracing::info!("Download completed: {}", task.filename);
-
+        
         // Delete metadata on completion
         if let Err(e) = metadata_repo.delete(&task.id).await {
             tracing::warn!("Failed to delete metadata: {}", e);
         }
-
+        
         let _ = app.emit("download://completed", serde_json::json!({
             "id": task.id
         }));
-
+        
         Ok(())
+    }
+    
+    /// Calculate chunk boundaries for multi-part download
+    fn calculate_chunks(total_size: u64, num_parts: usize) -> Vec<(u64, u64)> {
+        if total_size == 0 || num_parts == 0 {
+            return vec![(0, total_size)];
+        }
+        
+        let chunk_size = total_size / num_parts as u64;
+        let mut chunks = Vec::new();
+        
+        for i in 0..num_parts {
+            let start = (i as u64) * chunk_size;
+            let end = if i == num_parts - 1 {
+                total_size
+            } else {
+                ((i + 1) as u64) * chunk_size
+            };
+            chunks.push((start, end));
+        }
+        
+        chunks
     }
 
     /// Build the output file path and ensure directory exists
@@ -538,42 +729,6 @@ impl DownloadManager {
             .map_err(|e| crate::download::utils::categorize_io_error(&e))?;
 
         Ok(output_path)
-    }
-
-    /// Send HTTP GET request
-    async fn send_request(url: &str) -> Result<reqwest::Response> {
-        let response = reqwest::Client::new()
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(DownloadError::HttpError(response.status().as_u16()));
-        }
-
-        Ok(response)
-    }
-
-    /// Emit progress event
-    fn emit_progress(
-        app: &AppHandle,
-        id: &str,
-        downloaded: u64,
-        total: Option<u64>,
-    ) -> Result<()> {
-        let progress = total.map(|t| ((downloaded as f64 / t as f64) * 100.0).min(100.0) as u32);
-
-        let _ = app.emit("download://progress", serde_json::json!({
-            "id": id,
-            "progress": progress,
-            "downloaded_bytes": downloaded,
-            "total_bytes": total,
-            "speed": 0,
-            "status": "downloading"
-        }));
-
-        Ok(())
     }
 
     /// Check if a download is active
@@ -642,5 +797,33 @@ mod tests {
         let result = manager.pause_download("nonexistent").await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), DownloadError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_calculate_chunks() {
+        // 800 MB with 8 parts = 100 MB each
+        let chunks = DownloadManager::calculate_chunks(800 * 1024 * 1024, 8);
+        assert_eq!(chunks.len(), 8);
+        assert_eq!(chunks[0], (0, 100 * 1024 * 1024));
+        assert_eq!(chunks[7], (700 * 1024 * 1024, 800 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_calculate_chunks_single() {
+        // Small file = single chunk
+        let chunks = DownloadManager::calculate_chunks(100, 8);
+        assert_eq!(chunks.len(), 8);
+        // All chunks should be small
+        for (start, end) in chunks {
+            assert!(end <= 100);
+        }
+    }
+
+    #[test]
+    fn test_calculate_chunks_empty() {
+        // Zero size = single chunk
+        let chunks = DownloadManager::calculate_chunks(0, 8);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], (0, 0));
     }
 }

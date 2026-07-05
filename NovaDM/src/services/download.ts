@@ -10,6 +10,17 @@ export interface StartDownloadParams {
   saveLocation: string;
 }
 
+export interface RecoveryCandidate {
+  download_id: string;
+  filename: string;
+  url: string;
+  partial_path: string;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  resume_supported: boolean;
+  created_at: number;
+}
+
 export const downloadService = {
   async startDownload(params: StartDownloadParams): Promise<void> {
     // Only this service calls Tauri commands
@@ -60,9 +71,8 @@ export const downloadService = {
     await invoke('resume_download', { id });
   },
 
-  // Remove duplicate - real implementation above
-  // async cancelDownload(id: string): Promise<void> {
-  //   // Placeholder - will call Tauri command
-  //   await invoke('cancel_download', { id });
-  // },
+  async getRecoveryCandidates(): Promise<RecoveryCandidate[]> {
+    // Only this service calls Tauri commands
+    return await invoke('get_recovery_candidates', {});
+  },
 };

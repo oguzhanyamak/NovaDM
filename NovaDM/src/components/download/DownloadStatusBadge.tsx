@@ -1,7 +1,7 @@
 import { cn } from '../../lib/utils';
 
 interface DownloadStatusBadgeProps {
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  status: 'pending' | 'downloading' | 'paused' | 'recovered' | 'completed' | 'error' | 'cancelled';
   queuePosition?: number;
   className?: string;
 }
@@ -33,6 +33,11 @@ export function DownloadStatusBadge({ status, queuePosition, className }: Downlo
         return {
           label: 'Cancelled',
           className: 'bg-gray-500/10 text-gray-500 border-gray-500/20'
+        };
+      case 'recovered':
+        return {
+          label: 'Recovered',
+          className: 'bg-orange-500/10 text-orange-500 border-orange-500/20'
         };
       case 'pending':
       default:

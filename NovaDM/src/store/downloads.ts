@@ -17,6 +17,8 @@ interface DownloadsState {
   updateQueuePosition: (id: string, position: number) => void;
   retryDownload: (id: string) => void;
   markAsPaused: (id: string) => void;
+  markAsResumed: (id: string) => void;
+  markAsRecovered: (id: string, downloaded: number, total: number | null) => void;
 }
 
 export const useDownloadsStore = create<DownloadsState>((set) => ({ 
@@ -131,6 +133,34 @@ export const useDownloadsStore = create<DownloadsState>((set) => ({
           ? {
               ...d,
               status: 'paused' as const,
+              speed: 0,
+            }
+          : d
+      ),
+    })),
+
+  markAsResumed: (id) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'downloading' as const,
+              speed: 0,
+            }
+          : d
+      ),
+    })),
+
+  markAsRecovered: (id, downloaded, total) =>
+    set((state) => ({
+      downloads: state.downloads.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: 'recovered' as const,
+              downloaded,
+              size: total ?? d.size,
               speed: 0,
             }
           : d

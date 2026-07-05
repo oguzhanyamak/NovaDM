@@ -12,6 +12,7 @@ pub mod scheduler;
 pub mod metadata;
 pub mod resume_detector;
 pub mod partial_file;
+pub mod recovery;
 
 pub use manager::DownloadManager;
 pub use models::DownloadInfo;
@@ -21,3 +22,4 @@ pub use scheduler::{DownloadScheduler, DownloadState};
 pub use metadata::{DownloadMetadata, MetadataRepository};
 pub use resume_detector::{ResumeCapability, ResumeCapabilityDetector};
 pub use partial_file::PartialFileManager;
+pub use recovery::{RecoveryCandidate, RecoveryService};

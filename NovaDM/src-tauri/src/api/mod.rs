@@ -4,6 +4,7 @@
 use tauri::{AppHandle, State};
 use crate::core::AppState;
 use crate::download::manager::DownloadManager;
+use crate::download::recovery::{RecoveryCandidate, RecoveryService};
 use serde::{Deserialize, Serialize};
 
 /// Progress payload for download progress events
@@ -158,4 +159,44 @@ pub async fn retry_download(
 
     tracing::info!("Download retry initiated: {}", id);
     Ok(id)
+}
+
+#[tauri::command]
+pub async fn pause_download(
+    download_manager: State<'_, DownloadManager>,
+    id: String,
+) -> Result<(), String> {
+    tracing::info!("Pausing download: {}", id);
+
+    download_manager
+        .pause_download(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!("Download paused: {}", id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_download(
+    app_handle: AppHandle,
+    download_manager: State<'_, DownloadManager>,
+    id: String,
+) -> Result<(), String> {
+    tracing::info!("Resuming download: {}", id);
+
+    download_manager
+        .resume_download(app_handle, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!("Download resume initiated: {}", id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_recovery_candidates() -> Result<Vec<RecoveryCandidate>, String> {
+    let service = RecoveryService::new();
+    let candidates = service.scan().await;
+    Ok(candidates)
 }

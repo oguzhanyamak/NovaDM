@@ -29,6 +29,14 @@ export interface DownloadPausedData {
   id: string;
 }
 
+export interface DownloadResumedData {
+  id: string;
+}
+
+export interface DownloadRecoveredData {
+  id: string;
+}
+
 export interface DownloadQueuedData {
   id: string;
   position: number;
@@ -48,6 +56,8 @@ type CompletedCallback = (data: DownloadCompletedData) => void;
 type ErrorCallback = (data: DownloadErrorData) => void;
 type CancelledCallback = (data: DownloadCancelledData) => void;
 type PausedCallback = (data: DownloadPausedData) => void;
+type ResumedCallback = (data: DownloadResumedData) => void;
+type RecoveredCallback = (data: DownloadRecoveredData) => void;
 type QueuedCallback = (data: DownloadQueuedData) => void;
 type StartedCallback = (data: DownloadStartedData) => void;
 type RetryCallback = (data: DownloadRetryData) => void;
@@ -58,6 +68,8 @@ class EventService {
   private errorUnlistenPromise: Promise<UnlistenFn> | null = null;
   private cancelledUnlistenPromise: Promise<UnlistenFn> | null = null;
   private pausedUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private resumedUnlistenPromise: Promise<UnlistenFn> | null = null;
+  private recoveredUnlistenPromise: Promise<UnlistenFn> | null = null;
   private queuedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private startedUnlistenPromise: Promise<UnlistenFn> | null = null;
   private retryUnlistenPromise: Promise<UnlistenFn> | null = null;
@@ -66,6 +78,8 @@ class EventService {
   private errorCallbacks: Set<ErrorCallback> = new Set();
   private cancelledCallbacks: Set<CancelledCallback> = new Set();
   private pausedCallbacks: Set<PausedCallback> = new Set();
+  private resumedCallbacks: Set<ResumedCallback> = new Set();
+  private recoveredCallbacks: Set<RecoveredCallback> = new Set();
   private queuedCallbacks: Set<QueuedCallback> = new Set();
   private startedCallbacks: Set<StartedCallback> = new Set();
   private retryCallbacks: Set<RetryCallback> = new Set();
@@ -247,6 +261,50 @@ class EventService {
   }
 
   /**
+   * Register a listener for download resumed events
+   * @param callback - Function to call when resumed event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerResumedListener(callback: ResumedCallback): UnlistenFn {
+    this.resumedCallbacks.add(callback);
+
+    if (!this.resumedUnlistenPromise) {
+      this.resumedUnlistenPromise = listen<DownloadResumedData>(
+        'download://resumed',
+        (event) => {
+          this.resumedCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.resumedCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Register a listener for download recovered events
+   * @param callback - Function to call when recovered event is received
+   * @returns Unlisten function to remove the listener
+   */
+  registerRecoveredListener(callback: RecoveredCallback): UnlistenFn {
+    this.recoveredCallbacks.add(callback);
+
+    if (!this.recoveredUnlistenPromise) {
+      this.recoveredUnlistenPromise = listen<DownloadRecoveredData>(
+        'download://recovered',
+        (event) => {
+          this.recoveredCallbacks.forEach((cb) => cb(event.payload));
+        }
+      );
+    }
+
+    return () => {
+      this.recoveredCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Unregister all listeners
    */
   async unregisterAll(): Promise<void> {
@@ -255,6 +313,8 @@ class EventService {
     this.errorCallbacks.clear();
     this.cancelledCallbacks.clear();
     this.pausedCallbacks.clear();
+    this.resumedCallbacks.clear();
+    this.recoveredCallbacks.clear();
     this.queuedCallbacks.clear();
     this.startedCallbacks.clear();
     this.retryCallbacks.clear();
@@ -299,6 +359,18 @@ class EventService {
       const unlisten = await this.pausedUnlistenPromise;
       unlisten();
       this.pausedUnlistenPromise = null;
+    }
+
+    if (this.resumedUnlistenPromise) {
+      const unlisten = await this.resumedUnlistenPromise;
+      unlisten();
+      this.resumedUnlistenPromise = null;
+    }
+
+    if (this.recoveredUnlistenPromise) {
+      const unlisten = await this.recoveredUnlistenPromise;
+      unlisten();
+      this.recoveredUnlistenPromise = null;
     }
   }
 }

@@ -16,6 +16,7 @@ pub enum DownloadState {
     Queued,
     Downloading,
     Paused,
+    Recovered,
     Completed,
     Cancelled,
     Failed,

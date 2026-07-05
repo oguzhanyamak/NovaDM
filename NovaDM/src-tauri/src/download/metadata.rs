@@ -3,7 +3,7 @@
 //! Stores download state to enable pause/resume in the future.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Download metadata stored on disk
 /// 
@@ -131,6 +131,11 @@ impl MetadataRepository {
         Self { base_path }
     }
 
+    /// Get the base path
+    pub fn get_base_path(&self) -> &Path {
+        &self.base_path
+    }
+
     /// Get the path for a metadata file
     fn metadata_path(&self, download_id: &str) -> PathBuf {
         self.base_path.join(format!("{}.json", download_id))
@@ -181,6 +186,24 @@ impl MetadataRepository {
             tokio::fs::remove_file(&path).await?;
         }
         
+        Ok(())
+    }
+
+    /// Load metadata from a specific path
+    pub async fn load_from_path(&self, path: &Path) -> std::io::Result<DownloadMetadata> {
+        let json = tokio::fs::read_to_string(path).await?;
+        
+        let metadata: DownloadMetadata = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+        Ok(metadata)
+    }
+
+    /// Delete metadata from a specific path
+    pub async fn delete_from_path(&self, path: &Path) -> std::io::Result<()> {
+        if path.exists() {
+            tokio::fs::remove_file(path).await?;
+        }
         Ok(())
     }
 }

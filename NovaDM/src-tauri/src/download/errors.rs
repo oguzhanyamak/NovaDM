@@ -38,6 +38,14 @@ pub enum DownloadError {
     #[error("Download paused")]
     Paused,
 
+    /// File changed on server
+    #[error("File changed on server")]
+    FileChanged,
+
+    /// Resume not supported
+    #[error("Resume not supported")]
+    ResumeUnsupported,
+
     /// Permission denied
     #[error("Permission denied")]
     PermissionDenied,
