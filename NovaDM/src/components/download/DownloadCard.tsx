@@ -14,6 +14,8 @@ interface DownloadCardProps {
   progress: number;
   speed: number;
   queuePosition?: number;
+  isSelected?: boolean;
+  onSelect?: (id: string) => void;
   className?: string;
 }
 
@@ -25,6 +27,8 @@ export function DownloadCard({
   progress,
   speed,
   queuePosition,
+  isSelected,
+  onSelect,
   className
 }: DownloadCardProps) {
   const handleCancel = async () => {
@@ -47,9 +51,11 @@ export function DownloadCard({
     <div 
       data-testid={`download-card-${id}`}
       className={cn(
-        'bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors',
+        'bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors cursor-pointer',
+        isSelected && 'border-primary bg-primary/5',
         className
       )}
+      onClick={() => onSelect?.(id)}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4 flex-1 min-w-0">

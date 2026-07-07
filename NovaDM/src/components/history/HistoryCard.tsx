@@ -11,10 +11,11 @@ interface HistoryCardProps {
   entry: HistoryEntry;
   isSelected: boolean;
   onSelect: (id: string) => void;
+  onToggleSelection: (id: string) => void;
   className?: string;
 }
 
-export function HistoryCard({ entry, isSelected, onSelect, className }: HistoryCardProps) {
+export function HistoryCard({ entry, isSelected, onSelect, onToggleSelection, className }: HistoryCardProps) {
   const handleOpenFile = async () => {
     try {
       await downloadService.openFile(entry.output_path);
@@ -65,17 +66,18 @@ export function HistoryCard({ entry, isSelected, onSelect, className }: HistoryC
     <div
       data-testid={`history-card-${entry.id}`}
       className={cn(
-        'bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors',
+        'bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors cursor-pointer',
         isSelected && 'border-primary bg-primary/5',
         className
       )}
+      onClick={() => onSelect(entry.id)}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4 flex-1 min-w-0">
           <input
             type="checkbox"
             checked={isSelected}
-            onChange={() => onSelect(entry.id)}
+            onChange={() => onToggleSelection(entry.id)}
             className="w-4 h-4 rounded border-border"
             onClick={(e) => e.stopPropagation()}
           />

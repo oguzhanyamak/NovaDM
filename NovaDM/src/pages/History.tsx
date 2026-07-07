@@ -5,6 +5,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { HistoryCard } from '../components/history/HistoryCard';
 import { HistoryToolbar } from '../components/history/HistoryToolbar';
 import { useHistoryStore } from '../store/history';
+import { useDetailsStore } from '../store/details';
 
 export function History() {
   const {
@@ -22,6 +23,8 @@ export function History() {
     clearHistory,
     deleteSelected,
   } = useHistoryStore();
+
+  const { selectDownload, selection } = useDetailsStore();
 
   // Load history on mount
   useEffect(() => {
@@ -72,8 +75,12 @@ export function History() {
               <HistoryCard
                 key={entry.id}
                 entry={entry}
-                isSelected={selectedIds.has(entry.id)}
-                onSelect={toggleSelection}
+                isSelected={selectedIds.has(entry.id) || selection.downloadId === entry.id}
+                onSelect={(id) => {
+                  // Single click: select for details panel
+                  selectDownload(id, 'history');
+                }}
+                onToggleSelection={toggleSelection}
               />
             ))}
           </div>

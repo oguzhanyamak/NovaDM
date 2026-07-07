@@ -5,6 +5,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { DownloadCard } from '../components/download/DownloadCard';
 import { NewDownloadDialog } from '../components/NewDownloadDialog';
 import { useDownloadsStore } from '../store/downloads';
+import { useDetailsStore } from '../store/details';
 import { eventService } from '../services/event';
 import type { DownloadProgressData, DownloadCompletedData, DownloadErrorData, DownloadCancelledData, DownloadQueuedData, DownloadStartedData, DownloadRetryData } from '../services/event';
 
@@ -18,6 +19,7 @@ export function Downloads() {
   const queueDownload = useDownloadsStore((state) => state.queueDownload);
   const startQueuedDownload = useDownloadsStore((state) => state.startQueuedDownload);
   const retryDownload = useDownloadsStore((state) => state.retryDownload);
+  const { selectDownload, selection } = useDetailsStore();
 
   // Register event listeners
   useEffect(() => {
@@ -123,6 +125,8 @@ export function Downloads() {
               progress={download.progress}
               speed={download.speed}
               queuePosition={download.queuePosition}
+              isSelected={selection.downloadId === download.id}
+              onSelect={(id) => selectDownload(id, 'downloads')}
             />
             ))}
           </div>
